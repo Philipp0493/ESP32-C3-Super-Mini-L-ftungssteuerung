@@ -112,6 +112,19 @@ Busausgabe zuerst `off` wählen und den Versand des Aus-Befehls abwarten.
 Mehrere ESPs führen ihre Wechselzyklen unabhängig aus. Eine synchronisierte
 oder gegenläufige Paarsteuerung über mehrere ESPs ist nicht implementiert.
 
+### Automatischer Verschluss
+
+Im Lüftungsbetrieb ist die Frontklappe geöffnet. Der Befehl `pause` hält sie offen,
+`off` fordert das Schließen an. Während der Richtungswechsel bleibt sie geöffnet.
+Laut Geräteanleitung benötigt der Verschluss nach Anschluss an die Stromversorgung
+etwa 40–60 Sekunden zum Öffnen, bevor der Lüfter startet. Diese Anlaufzeit ist
+von der zehnsekündigen Motorpause der Firmware zu unterscheiden.
+
+Eine Klappenpositionsrückmeldung ist im dokumentierten Statusprotokoll nicht
+enthalten. Öffnen beim Start und Schließen bei `off` sind am Gerät noch zu prüfen;
+die Firmware prüft oder bestätigt keine mechanische Endposition. Ein Stromausfall
+entspricht keinem gesendeten `off`-Befehl.
+
 ## 5. Loxone
 
 Pro Lüfter einen virtuellen HTTP-Ausgang mit dessen ESP-IP anlegen. Darunter
