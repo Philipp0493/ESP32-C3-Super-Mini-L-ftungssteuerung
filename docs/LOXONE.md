@@ -1,13 +1,12 @@
-# Loxone-Integration und Bedienkonzept
+# Loxone: Lüfter einzeln einrichten
 
 ## Wo findet die Steuerung statt?
 
 ```mermaid
 flowchart LR
-    L[Loxone Miniserver] -->|HTTP-Befehle im Heimnetz| E[ESP32-C3]
-    P[Handy / PC: lokale ESP-Webseite] -->|Einrichten und bedienen| E
-    E -->|UART 9600 8N1| W[Waveshare isolierter RS485-Wandler]
-    W -->|RS485 A / B / Signalmasse| A[Ambientika Master]
+    L[Loxone Miniserver] -->|HTTP zur jeweiligen IP| E[Eigener ESP32 je Lüfter]
+    P[Lokale Webseite je ESP] --> E
+    E --> W[Eigener RS485-Wandler] --> A[Ein einzelner Lüfter]
 ```
 
 Die Oberfläche ist **Einrichtung und dauerhafte Bedienung** zugleich. Nach der
@@ -33,7 +32,7 @@ abweichen. Referenz: https://www.loxone.com/dede/kb/virtuelle-ausgaenge/
 2. Auf der ESP-Webseite unter **4 · Mit Loxone verbinden** einen Befehl wählen.
    Die vollständige Adresse enthält deine IP und deinen individuellen API-Schlüssel.
 3. In Loxone Config unter **Virtuelle Ausgänge** einen virtuellen Ausgang
-   anlegen, z. B. „Ambientika ESP“. Als Adresse `http://192.168.1.80` eintragen.
+   **pro Lüfter** anlegen, z. B. „Lüfter 1“. Als Adresse `http://192.168.1.80` eintragen.
 4. Darunter einen **virtuellen Ausgangsbefehl** für „WRG Stufe 1“ anlegen.
    Unter **Befehl bei EIN** den relativen Pfad aus der folgenden Tabelle
    eintragen. HTTP GET verwenden. `KEY` durch den Schlüssel der ESP-Webseite ersetzen.
@@ -43,7 +42,9 @@ abweichen. Referenz: https://www.loxone.com/dede/kb/virtuelle-ausgaenge/
    Config-Version einen Impuls-/Tastermodus anbietet, diesen entsprechend nutzen.
 6. Die Befehle mit Tastern bzw. deiner Betriebsartenlogik verbinden. Eine einzelne
    zentrale Betriebsartenwahl vermeidet widersprüchliche parallele Automationen.
-7. Projekt in den Miniserver übertragen. WRG-Taster auslösen und auf der
+7. Schritte für jeden weiteren Lüfter mit eigener ESP-IP und eigenem API-Schlüssel
+   wiederholen. Die RS485-Leitungen der Lüfter bleiben voneinander getrennt.
+8. Projekt in den Miniserver übertragen. WRG-Taster auslösen und auf der
    ESP-Webseite prüfen, ob die Betriebsart übernommen wurde. Tatsächliche
    Lüfterfunktion zusätzlich beobachten. Danach Aus und Boost prüfen.
 
@@ -91,14 +92,21 @@ Sie erzwingt drei Sekunden Sendepause. Es gibt **keine automatische Sensorabfrag
 JSON regelmäßig zu lesen aktualisiert die Lüftersensorwerte nicht.
 HTTP 200 bei Steuerbefehlen bestätigt nur die Annahme durch den ESP.
 
-Bei WLAN-/Loxone-Ausfall läuft der ESP-Zyklus weiter. Bei ausgefallenem ESP fehlt
-der serielle Sender: Lüfterverhalten bei Kommunikationsverlust muss am Gerät
-geprüft werden. Die Verbindung verwendet HTTP im vertrauenswürdigen Heimnetz,
-keine Internet-Portfreigabe einrichten.
+## Mehrere unabhängige Lüfter
 
-## Acht Lüfter
+Je Lüfter werden ein ESP32-C3 und ein RS485-Wandler benötigt. Jeder ESP wird
+separat eingerichtet und erhält eine feste IP-Zuordnung. Die Firmware ist identisch;
+API-Schlüssel und Geräteeinstellungen werden auf jedem ESP separat gespeichert.
 
-Das dokumentierte Protokoll steuert eine Master/Slave-Gruppe gemeinsam, ohne
-individuelle Raumadressen. Acht unabhängige Raumzonen sind damit nicht automatisch
-umgesetzt. Dafür braucht es ein abgestimmtes Gateway-/Buskonzept und ein
-Lüftungskonzept für Luftmengen und gegenläufige Geräte.
+| Virtueller Ausgang | Adresse | Schlüssel |
+|---|---|---|
+| Lüfter 1 | `http://192.168.1.80` | Schlüssel von ESP 1 |
+| Lüfter 2 | `http://192.168.1.81` | Schlüssel von ESP 2 |
+| Weitere Lüfter | Jeweils eigene ESP-IP | Jeweils eigener Schlüssel |
+
+Jeder einzelne Lüfter ist auf „Master mit Wandpanel“ eingestellt, um die externen
+Telegramme zu empfangen. Es gibt keine angeschlossenen Slave-Lüfter und keine
+gemeinsame RS485-Gruppe. Der ESP führt den Zyklus seines Lüfters eigenständig aus.
+Synchronisierte oder gegenläufige Wechselzyklen zwischen mehreren ESPs sind
+nicht implementiert. Gemeinsame Bedienung kann Loxone durch Senden von Befehlen
+an mehrere virtuelle Ausgänge abbilden; dies synchronisiert die Zyklusphasen nicht.

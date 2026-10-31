@@ -14,7 +14,7 @@ zu. Die spätere Lüfter-Webseite läuft unabhängig davon auf deinem ESP.
    Lüfter abgeklemmt bleiben. Andere serielle Programme schließen.
 3. Den Browser-Flasher öffnen. Baudrate zunächst **115200** wählen.
 4. **Connect** drücken und den USB-Port des ESP auswählen. Chiptyp muss
-   **ESP32-C3** sein, Flashgröße **4 MB**. Bei abweichender Hardware stoppen.
+   **ESP32-C3** sein, Flashgröße **4 MB**.
 5. Wenn die Verbindung nicht klappt: BOOT gedrückt halten, RESET kurz drücken,
    BOOT loslassen und Connect erneut versuchen. USB-Port kann sich dabei ändern.
 6. Eine Datei hinzufügen, falls nötig über **Add File**. Nur eine Zeile verwenden:
@@ -28,8 +28,7 @@ zu. Die spätere Lüfter-Webseite läuft unabhängig davon auf deinem ESP.
    | Flash Size | `keep` (Image enthält 4 MB) |
    | Erase all | für den normalen Ablauf nicht erforderlich |
 
-7. **Program** drücken. USB-Kabel nicht trennen. Erfolgreiches Ende abwarten;
-   bei Fehlern nicht von einem vollständigen Flash ausgehen.
+7. **Program** drücken und den erfolgreichen Abschluss abwarten.
 8. **Disconnect** drücken. RESET kurz drücken, ohne BOOT gedrückt zu halten.
 9. Mit der [WLAN-Einrichtung](../README.md#3-einrichten--ohne-usb-terminal) fortfahren.
 
