@@ -4,24 +4,40 @@
 python -m venv /workspace/ambientika-tools
 /workspace/ambientika-tools/bin/pip install platformio==6.1.18
 bash scripts/build.sh
-g++ -std=c++17 -Wall -Wextra -Wno-misleading-indentation -fsanitize=address,undefined -fno-omit-frame-pointer -I tests/native tests/native/test.cpp -o /tmp/ambientika-native-tests
+g++ -std=c++17 -Wall -Wextra -fsanitize=address,undefined -fno-omit-frame-pointer -I tests/native tests/native/test.cpp -o /tmp/ambientika-native-tests
 /tmp/ambientika-native-tests
 ```
 
-PlatformIO ESP32-Plattform 6.10.0, Arduino 2.0.17. Das Buildscript erzeugt das
-Gesamtimage, überprüft dessen Bestandteile und schreibt `dist/SHA256SUMS`.
+Pfade lassen sich über `AMBIENTIKA_TOOLS` (venv mit PlatformIO) und `PLATFORMIO_CORE_DIR`
+anpassen. PlatformIO ESP32-Plattform 6.10.0, Arduino 2.0.17, Standard-Partitionstabelle
+(zwei OTA-Partitionen à 1,25 MB). Das Buildscript erzeugt in `dist/v2` Komplettimage,
+Update-Image (ab 0xE000) und OTA-Datei, prüft deren Inhalt und schreibt `SHA256SUMS`.
 
-Native Tests führen Firmware-Handler und Steuerungsschleife mit simulierten
-UART-/Web-/WLAN-Schnittstellen aus. Abgedeckt sind Busfreigabe, Parameter,
-Authentifizierung, WRG-Zyklus, Motorpausen, wiederholte Befehle, Boost-Ende,
-Einstellungswiederherstellung, Statusparser, Drei-Sekunden-Sendesperre,
-Zeitüberlauf und WLAN-Wiederherstellung.
+Die v1-Dateien in `dist/v1` sind aus der ursprünglich veröffentlichten v1-Binary
+geschnitten (Update-Image = Komplettimage ab 0xE000, OTA = ab 0x10000), damit sie
+byte-identisch zur geflashten v1 sind.
 
-Build, Imageprüfung, native Tests mit AddressSanitizer/UndefinedBehaviorSanitizer
-und JavaScript-Syntaxprüfung wurden erfolgreich ausgeführt. Physische
-ESP-/WLAN-/Lüftertests sind bisher nicht ausgeführt worden.
+## Aufbau der Firmware (`src/main.cpp`)
 
-Pro ESP ist eine UART-/RS485-Verbindung implementiert. Mehrere Geräte verwenden
-dieselbe Firmware mit getrennt gespeicherten WLAN-Einstellungen und API-Schlüsseln.
-Ein zentrales Mehrkanal-Gateway und eine Synchronisation der Wechselzyklen sind
-nicht implementiert.
+| Teil | Inhalt |
+|---|---|
+| Konstanten | Pins, Zeiten laut Herstelleranleitung, Telegramme |
+| Lüfterlogik | `setMode`, `busLoop` (500-ms-Takt, Motorpausen, WRG-Zyklus, Boost, Filter-Reset, Statusabfrage mit 3 s Sendesperre), Telegramm-Encoder |
+| Persistenz | `saveState` schreibt Betriebsart/Einstellungen nur bei Änderung in den NVS |
+| HTTP | Handler für API, Bedienseite (`ui.h`), OTA-Update |
+| WLAN/System | Einrichtungs-WLAN, mDNS, statische IP, BOOT-Taster-Reset |
+
+## Tests
+
+Die nativen Tests binden `src/main.cpp` direkt ein und ersetzen UART, Webserver, WLAN, NVS,
+Update und mDNS durch Attrappen (`tests/native/*.h`). Abgedeckt: Busfreigabe,
+Authentifizierung, Parameterprüfung (auch Loxone-Analogwerte), WRG-Zyklus mit vollständiger
+Motorpause, Stufenänderung ohne Pause, Boost inkl. Rückkehr zu „Aus“, manuelle und
+automatische Statusabfrage mit Sendesperre, `comm_ok`, Filter-Reset, Telegramm-Encoder für
+alle Hand-/Automatiktelegramme, Wiederherstellung nach Neustart, Passwortschutz,
+API-Schlüsselwechsel, Einrichtungs-WLAN-Regeln, statische IP, OTA (inkl. Ablehnung des
+Komplettimages und Sperre bei laufendem Lüfter), BOOT-Reset, `millis()`-Überlauf.
+Zusätzlich wurde die Weboberfläche mit Playwright gegen einen Mock-Server geprüft.
+
+Physische Tests mit ESP, WLAN und Lüfter stehen für v2 noch aus (siehe Testliste in
+[LOXONE.md](LOXONE.md#7-testen-und-fehlersuche)).

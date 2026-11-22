@@ -6,8 +6,15 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cctype>
 #define HEX 16
 #define SERIAL_8N1 0
+#define LOW 0
+#define HIGH 1
+#define INPUT_PULLUP 2
+inline int fakeBootPin=HIGH;
+inline void pinMode(int,int){}
+inline int digitalRead(int){return fakeBootPin;}
 inline uint32_t fakeNow=100;
 inline uint32_t millis(){return fakeNow;}
 inline void delay(uint32_t n){fakeNow+=n;}
@@ -24,6 +31,8 @@ public:
  int toInt()const{return atoi(c_str());}
  String substring(size_t a,size_t b)const{return substr(a,b-a);}
  bool startsWith(const char*s)const{return rfind(s,0)==0;}
+ int indexOf(char c)const{size_t p=find(c);return p==npos?-1:int(p);}
+ void toLowerCase(){for(auto&c:*this)c=tolower(c);}
 };
 inline String operator+(const String&a,const String&b){return std::string(a)+std::string(b);}
 inline String operator+(const String&a,const char*b){return a+String(b);}
@@ -43,5 +52,5 @@ public:
  explicit operator bool()const{return true;}
 };
 inline HardwareSerial Serial(0);
-struct ESPClass {uint64_t getEfuseMac(){return 0x1234;}void restart(){}};
+struct ESPClass {int restarts=0;uint64_t getEfuseMac(){return 0x1234;}void restart(){restarts++;}};
 inline ESPClass ESP;

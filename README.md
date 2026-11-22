@@ -22,14 +22,20 @@ hat keine individuellen Geräteadressen. Die Einstellung **„Master mit Wandpan
 ist an jedem einzelnen Lüfter erforderlich, damit er Steuerbefehle empfängt;
 es werden keine Slave-Lüfter verbunden.
 
-## Downloads
+## Versionen und Downloads
 
-- [Komplettpaket mit Firmware, Anleitung und Quellcode](dist/ambientika-c3-testpaket.zip)
-- [Firmware-Binary](dist/ambientika-c3-single-fan.bin)
-- [Grafisch flashen](docs/FLASHEN.md)
-- [Loxone einrichten](docs/LOXONE.md)
+| Version | Stand | Dateien |
+|---|---|---|
+| **v2** (aktuell) | Gerätepasswort, Web-Update, Filter-Reset, Wiederanlauf nach Stromausfall, Loxone-Rückmeldung, feste IP | [dist/v2](dist/v2/) |
+| v1 | erste Version | [dist/v1](dist/v1/) |
 
-Firmware: ESP32-C3, 4 MB Flash, DIO/40 MHz, USB-CDC. Gesamtimage an **0x0** flashen.
+Was sich geändert hat und wie du zwischen v1 und v2 wechselst: [docs/VERSIONEN.md](docs/VERSIONEN.md)
+
+- [Flashen (USB oder Webseite)](docs/FLASHEN.md)
+- [Loxone-Integration mit fester IP und App](docs/LOXONE.md)
+- [HTTP-API](docs/API.md)
+
+Firmware: ESP32-C3, 4 MB Flash, DIO/40 MHz, USB-CDC.
 
 ## 1. Verdrahtung je Lüfter
 
@@ -59,80 +65,72 @@ DIP-Schalter ON/ON, entsprechend Seite 2 der RS485-Anleitung.
 
 ## 2. Flashen
 
-[Espressif Browser-Flasher](https://espressif.github.io/esptool-js/) in Chrome
-oder Edge am PC öffnen. ESP per USB anschließen, **Connect** wählen, die Binary
-mit **Flash Address 0x0** hinzufügen und **Program** drücken. Anschließend
-**Disconnect** und am ESP **RESET** drücken.
+Neuer ESP: `dist/v2/ambientika-c3-v2-komplett-0x0.bin` mit dem
+[Espressif Browser-Flasher](https://espressif.github.io/esptool-js/) an **0x0** flashen.
+ESP mit v1: `ambientika-c3-v2-update-0xE000.bin` an **0xE000** – dann bleiben WLAN und
+API-Schlüssel erhalten. Später geht jedes Update über die Weboberfläche.
+Details: [docs/FLASHEN.md](docs/FLASHEN.md).
 
-Die [Flash-Anleitung](docs/FLASHEN.md) enthält alle Einstellungen und eine
-Alternative als installiertes Windows-Programm.
+## 3. Einrichten
 
-## 3. Einrichten – ohne USB-Terminal
+Für jeden ESP nacheinander:
 
-Für jeden ESP nacheinander durchführen:
+1. Mit dem WLAN **Ambientika-…** verbinden. Passwort: **Lueftung-Start** (gilt nur bis
+   zur Einrichtung).
+2. **http://192.168.4.1** öffnen.
+3. Unter **1** ein eigenes **Gerätepasswort** festlegen (danach Anmeldung mit Benutzer
+   `admin`; das Einrichtungs-WLAN nutzt ab dem nächsten Start ebenfalls dieses Passwort).
+4. Unter **1** das 2,4-GHz-Heim-WLAN eintragen. Die angezeigte neue Adresse notieren,
+   ins Heim-WLAN wechseln und sie öffnen.
+5. Unter **2** einen Gerätenamen vergeben (z. B. `lueftung-bad`) und im Router eine feste
+   IP zuordnen – Schritt für Schritt in [docs/LOXONE.md](docs/LOXONE.md#1-feste-ip-adresse-vergeben).
+6. Unter **3** nach Prüfung der Verdrahtung den Bus freigeben.
+7. Unter **4** z. B. **Wärmerückgewinnung, Stufe 1** wählen und am Lüfter prüfen.
+8. Loxone einrichten: [docs/LOXONE.md](docs/LOXONE.md).
 
-1. Mit **Ambientika-…** verbinden. Passwort: **Lueftung-Start**.
-2. **http://192.168.4.1** im Browser öffnen.
-3. Unter **1 · Heim-WLAN verbinden** Name und Passwort des 2,4-GHz-WLANs
-   eintragen und **WLAN verbinden** drücken.
-4. Die angezeigte neue IP-Adresse notieren. Ins Heim-WLAN wechseln und diese
-   IP im Browser öffnen. Alternativ die IP im Router nachsehen.
-5. Im Router eine feste DHCP-Zuordnung für diesen ESP anlegen.
-6. Unter **2 · Lüfter freigeben** die Busausgabe freigeben.
-7. Unter **3 · Lüftung bedienen** beispielsweise **Wärmerückgewinnung,
-   Stufe 1** wählen und **Übernehmen** drücken.
-8. Unter **4 · Mit Loxone verbinden** die Befehlsadressen für diesen Lüfter kopieren.
-9. IP-Adresse und API-Schlüssel dem jeweiligen Lüfter in Loxone zuordnen.
-
-Das Einrichtungs-WLAN schließt bei erfolgreicher Verbindung nach etwa einer
-Minute, sonst nach zehn Minuten. Ein Neustart öffnet es erneut. Bei WLAN-Ausfall
-öffnet der ESP nach etwa einer Minute ein zeitbegrenztes Einrichtungs-WLAN,
-sofern dessen Zeitfenster nicht bereits abgelaufen ist.
-
-Die Webseite bleibt im Heimnetz unter der jeweiligen ESP-IP zur Einrichtung und
-Bedienung erreichbar. Für die Steuerung durch Loxone muss sie nicht geöffnet sein.
+Das Einrichtungs-WLAN öffnet sich nur, solange kein WLAN gespeichert ist oder wenn das
+Heim-WLAN länger als 2 Minuten nicht erreichbar ist; es schließt eine Minute nach
+erfolgreicher Verbindung. **Passwort vergessen oder Netzwerk verstellt:** BOOT-Taster am ESP
+10 Sekunden halten (WLAN, Passwort und Netzwerk werden gelöscht; API-Schlüssel und
+Freigabe bleiben).
 
 ## 4. Betriebsarten
 
-| Betriebsart | Verhalten |
-|---|---|
-| `wrg` | 60 s Zuluft, 10 s Pause, 60 s Abluft, 10 s Pause |
-| `auto` | Wechselzyklus mit Automatiktelegrammen, Tag/Nacht und Feuchtestufe 2/3 |
-| `supply` | Dauerhafte Zuluft, Stufe 0–3 |
-| `extract` | Dauerhafte Abluft, Stufe 0–3 |
-| `boost` | 20 Minuten Abluft Stufe 3, danach vorherige Betriebsart und Einstellungen |
-| `pause` | Motorpause, Klappe offen |
-| `off` | Motor aus, Klappe geschlossen |
+| Betriebsart | Zahl | Verhalten |
+|---|---|---|
+| `off` | 0 | Motor aus, Klappe geschlossen |
+| `wrg` | 1 | 60 s Zuluft, 10 s Pause, 60 s Abluft, 10 s Pause |
+| `auto` | 2 | Wechselzyklus mit Automatiktelegrammen, Tag/Nacht und Feuchtestufe 2/3 |
+| `supply` | 3 | Dauerhafte Zuluft, Stufe 0–3 |
+| `extract` | 4 | Dauerhafte Abluft, Stufe 0–3 |
+| `pause` | 5 | Motorpause, Klappe offen |
+| `boost` | 6 | 20 Minuten Abluft Stufe 3, danach vorherige Betriebsart (auch „Aus“) |
 
-Der ESP übernimmt Telegramme im 500-ms-Takt und die Motorpausen. Stufe 0 ist
-nicht gleich `off`. Nach Neustart wird `off` gewählt, die Busfreigabe bleibt gespeichert.
-Bei WLAN-/Loxone-Ausfall läuft die lokale Steuerung weiter. Zum Sperren der
-Busausgabe zuerst `off` wählen und den Versand des Aus-Befehls abwarten.
+Der ESP sendet die Telegramme im 500-ms-Takt und übernimmt alle Motorpausen selbst.
+Stufe 0 ist nicht gleich `off`. Nach einem Neustart fährt der ESP die zuletzt gewählte
+Betriebsart wieder an (abschaltbar, Boost ausgenommen). Bei WLAN-/Loxone-Ausfall läuft die
+lokale Steuerung weiter. Der Sensorstatus (Filter, Feuchte, Dämmerung) wird alle 5 Minuten
+abgefragt; der Filteralarm lässt sich über Webseite oder Loxone zurücksetzen.
 
 Mehrere ESPs führen ihre Wechselzyklen unabhängig aus. Eine synchronisierte
 oder gegenläufige Paarsteuerung über mehrere ESPs ist nicht implementiert.
 
 ### Automatischer Verschluss
 
-Im Lüftungsbetrieb ist die Frontklappe geöffnet. Der Befehl `pause` hält sie offen,
-`off` fordert das Schließen an. Während der Richtungswechsel bleibt sie geöffnet.
-Laut Geräteanleitung benötigt der Verschluss nach Anschluss an die Stromversorgung
-etwa 40–60 Sekunden zum Öffnen, bevor der Lüfter startet. Diese Anlaufzeit ist
-von der zehnsekündigen Motorpause der Firmware zu unterscheiden.
-
-Eine Klappenpositionsrückmeldung ist im dokumentierten Statusprotokoll nicht
-enthalten. Öffnen beim Start und Schließen bei `off` sind am Gerät noch zu prüfen;
-die Firmware prüft oder bestätigt keine mechanische Endposition. Ein Stromausfall
-entspricht keinem gesendeten `off`-Befehl.
+Im Lüftungsbetrieb ist die Frontklappe geöffnet. `pause` hält sie offen, `off` fordert das
+Schließen an. Laut Geräteanleitung braucht der Verschluss nach dem Einschalten der
+Stromversorgung etwa 40–60 Sekunden zum Öffnen, bevor der Lüfter startet – unabhängig von
+der zehnsekündigen Motorpause der Firmware. Eine Klappenpositionsrückmeldung gibt das
+Protokoll nicht her. Ein Stromausfall entspricht keinem gesendeten `off`-Befehl.
 
 ## 5. Loxone
 
-Pro Lüfter einen virtuellen HTTP-Ausgang mit dessen ESP-IP anlegen. Darunter
-Befehle für WRG, Automatik, Boost und Aus hinterlegen. Beispiel:
+Kurzfassung: feste IP vergeben → in Loxone Config je Lüfter einen **Virtuellen Ausgang**
+(`http://ESP-IP`) mit Befehlen wie `/api/control?key=KEY&mode=<v>` (Radiotasten) und einen
+**Virtuellen HTTP Eingang** (`http://ESP-IP/api/loxone`) für die Rückmeldung anlegen,
+Raum/Kategorie setzen → in der App bedienen.
 
-`http://ESP-IP/api/control?key=API-SCHLUESSEL&mode=wrg&level=1`
-
-[Schritt-für-Schritt-Anleitung und Befehlstabelle](docs/LOXONE.md).
+**[Ausführliche Anleitung mit Router, Loxone Config und App](docs/LOXONE.md)**
 
 ## Unterlagen und Entwicklung
 
@@ -140,3 +138,4 @@ Befehle für WRG, Automatik, Boost und Aus hinterlegen. Beispiel:
 - [Geräteanleitung 2024](docs/reference/instruction-manual-2024-1.pdf)
 - [Waveshare Anschlussbeschreibung](https://www.waveshare.com/wiki/TTL_TO_RS485_(C))
 - [Build und Tests](docs/ENTWICKLUNG.md)
+- [Versionen und Änderungen](docs/VERSIONEN.md)
