@@ -7,6 +7,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <cctype>
+#include <cstdarg>
+#include <ctime>
 #define HEX 16
 #define SERIAL_8N1 0
 #define LOW 0
@@ -52,5 +54,6 @@ public:
  explicit operator bool()const{return true;}
 };
 inline HardwareSerial Serial(0);
-struct ESPClass {int restarts=0;uint64_t getEfuseMac(){return 0x1234;}void restart(){restarts++;}};
+inline void configTzTime(const char*,const char*,const char* =nullptr,const char* =nullptr){}
+struct ESPClass {int restarts=0;uint32_t getFreeHeap(){return 200000;}uint32_t getMinFreeHeap(){return 150000;}uint64_t getEfuseMac(){return 0x1234;}void restart(){restarts++;}};
 inline ESPClass ESP;

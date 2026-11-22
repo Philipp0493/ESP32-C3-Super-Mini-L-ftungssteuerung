@@ -8,7 +8,12 @@ struct IPAddress {
  bool fromString(const String&v){int a,b,c,d;char e;if(sscanf(v.c_str(),"%d.%d.%d.%d%c",&a,&b,&c,&d,&e)!=4)return false;for(int x:{a,b,c,d})if(x<0||x>255)return false;s=v;return true;}
  String toString()const{return s;}
 };
+typedef enum {ARDUINO_EVENT_WIFI_STA_GOT_IP,ARDUINO_EVENT_WIFI_STA_DISCONNECTED} arduino_event_id_t;
+struct arduino_event_info_t {struct {uint8_t reason;} wifi_sta_disconnected;};
+typedef void (*WiFiEventCb)(arduino_event_id_t,arduino_event_info_t);
 struct WiFiClass {
+ WiFiEventCb eventCb=nullptr; void onEvent(WiFiEventCb cb){eventCb=cb;}
+ String SSID(){return ssid;} int channel(){return 6;} IPAddress gatewayIP(){IPAddress i;i.s="192.0.2.254";return i;}
  int connection=0,apStarts=0,apStops=0,configs=0,txPower=0;String ssid,password,hostname,apPassword;
  void mode(int){} void setHostname(const char*h){hostname=h;} void setTxPower(int p){txPower=p;}
  void config(IPAddress,IPAddress,IPAddress,IPAddress){configs++;}

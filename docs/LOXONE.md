@@ -393,6 +393,10 @@ mehrere ESPs ist nicht implementiert.
 6. Stromausfall simulieren (Sicherung kurz aus) → Lüftung läuft danach in der letzten
    Betriebsart wieder an.
 
+**Protokoll ansehen:** ESP-Seite → **7 · Protokoll**. Dort steht jeder angekommene Befehl mit
+der IP des Absenders (Miniserver) und jeder abgelehnte Befehl mit Grund – siehe
+[FEHLERSUCHE.md](FEHLERSUCHE.md).
+
 **Befehl im Browser testen** (ersetzt Loxone, gut zur Fehlersuche):
 `http://192.168.178.81/api/control?key=KEY&mode=1` → Antwort ist ein JSON mit `"mode":"wrg"`.
 

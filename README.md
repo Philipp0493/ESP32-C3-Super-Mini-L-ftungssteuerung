@@ -26,13 +26,14 @@ es werden keine Slave-Lüfter verbunden.
 
 | Version | Stand | Dateien |
 |---|---|---|
-| **v2** (aktuell) | Gerätepasswort, Web-Update, Filter-Reset, Wiederanlauf nach Stromausfall, Loxone-Rückmeldung, feste IP | [dist/v2](dist/v2/) |
+| **v2** (aktuell, Firmware 2.1.0) | Gerätepasswort, Web-Update, Filter-Reset, Wiederanlauf nach Stromausfall, Loxone-Rückmeldung, feste IP, Ereignisprotokoll | [dist/v2](dist/v2/) |
 | v1 | erste Version | [dist/v1](dist/v1/) |
 
 Was sich geändert hat und wie du zwischen v1 und v2 wechselst: [docs/VERSIONEN.md](docs/VERSIONEN.md)
 
 - [Flashen (USB oder Webseite)](docs/FLASHEN.md)
 - [Loxone-Integration mit fester IP und App](docs/LOXONE.md)
+- [Fehlersuche mit dem Protokoll](docs/FEHLERSUCHE.md)
 - [HTTP-API](docs/API.md)
 
 Firmware: ESP32-C3, 4 MB Flash, DIO/40 MHz, USB-CDC.
@@ -93,6 +94,9 @@ Heim-WLAN länger als 2 Minuten nicht erreichbar ist; es schließt eine Minute n
 erfolgreicher Verbindung. **Passwort vergessen oder Netzwerk verstellt:** BOOT-Taster am ESP
 10 Sekunden halten (WLAN, Passwort und Netzwerk werden gelöscht; API-Schlüssel und
 Freigabe bleiben).
+
+**Funktioniert etwas nicht?** Auf der ESP-Seite unter **7 · Protokoll** das Ereignisprotokoll
+herunterladen und zur Fehlersuche weitergeben ([docs/FEHLERSUCHE.md](docs/FEHLERSUCHE.md)).
 
 ## 4. Betriebsarten
 

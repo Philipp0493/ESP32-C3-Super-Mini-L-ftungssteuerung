@@ -26,6 +26,7 @@ byte-identisch zur geflashten v1 sind.
 | Persistenz | `saveState` schreibt Betriebsart/Einstellungen nur bei Änderung in den NVS |
 | HTTP | Handler für API, Bedienseite (`ui.h`), OTA-Update |
 | WLAN/System | Einrichtungs-WLAN, mDNS, statische IP, BOOT-Taster-Reset |
+| Protokoll | `logMsg`/`LOG`/`LOG_IMPORTANT`: RAM-Ring (200 × 102 Byte im `.noinit`-Bereich, übersteht Software-Neustarts, mit Magic/Prüfwert) und 16 wichtige Einträge als NVS-Blob; Ausgabe über `/api/log` |
 
 ## Tests
 
@@ -35,7 +36,9 @@ Authentifizierung, Parameterprüfung (auch Loxone-Analogwerte), WRG-Zyklus mit v
 Motorpause, Stufenänderung ohne Pause, Boost inkl. Rückkehr zu „Aus“, manuelle und
 automatische Statusabfrage mit Sendesperre, `comm_ok`, Filter-Reset, Telegramm-Encoder für
 alle Hand-/Automatiktelegramme, Wiederherstellung nach Neustart, Passwortschutz,
-API-Schlüsselwechsel, Einrichtungs-WLAN-Regeln, statische IP, OTA (inkl. Ablehnung des
+API-Schlüsselwechsel, Einrichtungs-WLAN-Regeln, Protokoll (Inhalt, keine Geheimnisse,
+Ringpuffer, Kürzung, Verhalten bei Absturz/Stromausfall/beschädigtem Speicher, WLAN-Gründe,
+unerwartete Busdaten), statische IP, OTA (inkl. Ablehnung des
 Komplettimages und Sperre bei laufendem Lüfter), BOOT-Reset, `millis()`-Überlauf.
 Zusätzlich wurde die Weboberfläche mit Playwright gegen einen Mock-Server geprüft.
 

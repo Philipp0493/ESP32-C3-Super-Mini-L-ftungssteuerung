@@ -61,6 +61,9 @@ Sensorwerte: −1 unbekannt, 0 inaktiv, 1 aktiv.
 | `/api/network` | `hostname`, `ipmode=dhcp|static`, `ip`, `mask`, `gw`, `dns`, `txlow=0|1` → Neustart |
 | `/api/restart` | – |
 | `/update` | Multipart-Upload der `…-ota.bin`, nur im Zustand „Aus“ |
+| `/api/log/clear` | Protokoll löschen |
+
+Protokoll lesen: `GET /api/log?key=KEY` → Text ([FEHLERSUCHE.md](FEHLERSUCHE.md)).
 
 Die Bedienseite `/` erfordert nach dem Festlegen des Gerätepassworts HTTP-Basic-Auth
 (Benutzer `admin`).

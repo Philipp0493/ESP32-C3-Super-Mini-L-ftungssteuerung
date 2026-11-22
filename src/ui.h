@@ -14,6 +14,7 @@ small{color:#4c6372}h1{margin-bottom:0}.danger{background:#a03838}.secondary{bac
 .warn{background:#fdf0d5;border-left:5px solid #d89614;padding:12px;border-radius:8px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}@media(max-width:560px){.grid{grid-template-columns:1fr}}
 progress{width:100%;height:18px}
+pre{background:#0f2230;color:#d8e6ee;padding:12px;border-radius:8px;max-height:420px;overflow:auto;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
 </style>
 <h1>Meine Lüftung</h1><p id="sub">Ambientika · ein Lüfter · Firmware {{VERSION}}</p>
 <div id="message" role="status" aria-live="polite">Verbindung wird geprüft …</div>
@@ -64,6 +65,10 @@ progress{width:100%;height:18px}
 <section><h2>6 · Firmware-Update</h2><p>Datei <code>ambientika-c3-…-ota.bin</code> auswählen. Vorher „Aus“ wählen. Einstellungen, WLAN und API-Schlüssel bleiben erhalten.</p>
 <form id="update"><input type="file" name="firmware" accept=".bin" required><progress id="progress" max="100" value="0" hidden></progress><button>Firmware hochladen</button></form>
 <button id="restart" class="secondary">ESP neu starten</button></section>
+
+<section><h2>7 · Protokoll</h2><p>Der ESP protokolliert Starts (mit Grund, z. B. Stromausfall oder Absturz), WLAN-Verbindungen, Befehle von Loxone und Webseite, abgelehnte Befehle, Antworten des Lüfters und Updates. Bei Problemen das Protokoll herunterladen oder kopieren und zur Fehlersuche weitergeben – Passwörter und API-Schlüssel sind nicht enthalten.</p>
+<button id="logshow">Protokoll anzeigen</button><button id="logdl" class="secondary">Herunterladen</button><button id="logcopy" class="secondary">Kopieren</button><button id="logclear" class="danger">Löschen</button>
+<pre id="log" hidden></pre><small>Die letzten 200 Einträge überstehen Neustarts und Updates, aber keinen Stromausfall. Wichtige Ereignisse (Starts, Fehler, Updates, Einstellungsänderungen) werden zusätzlich dauerhaft gespeichert.</small></section>
 <script>
 const key='{{KEY}}',$=s=>document.querySelector(s);let initialized=false,settings=null;
 $('#key').textContent=key;
@@ -88,6 +93,11 @@ bind('#disable',async()=>{await command('/enable',{enabled:0});message('Busausga
 bind('#off',async()=>{await command('/api/control',{mode:'off'});message('Aus beauftragt.')});
 bind('#query',async()=>{await command('/api/query');message('Status angefordert. Drei Sekunden Sendepause abwarten.')});
 bind('#filterreset',async()=>{if(!confirm('Filteralarm zurücksetzen? Nur nach Filtertausch/-reinigung. Der Motor stoppt dafür 2 Sekunden.'))return;await command('/api/filterreset');message('Filter-Reset gesendet. Der Lüfter läuft danach in der vorherigen Betriebsart weiter.')});
+async function getLog(){let r=await fetch('/api/log?key='+encodeURIComponent(key));if(!r.ok)throw Error(await r.text());return r.text()}
+bind('#logshow',async()=>{let t=await getLog(),l=$('#log');l.textContent=t;l.hidden=false;l.scrollTop=l.scrollHeight;message('Protokoll geladen.')});
+bind('#logdl',async()=>{let t=await getLog(),a=document.createElement('a');a.href=URL.createObjectURL(new Blob([t],{type:'text/plain'}));a.download='ambientika-'+(settings?settings.hostname:'esp')+'-protokoll-'+new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')+'.txt';document.body.appendChild(a);a.click();a.remove();message('Protokoll heruntergeladen.')});
+bind('#logcopy',async()=>{let t=await getLog();try{await navigator.clipboard.writeText(t);message('Protokoll in die Zwischenablage kopiert.')}catch(e){let l=$('#log');l.textContent=t;l.hidden=false;let r=document.createRange();r.selectNodeContents(l);let sel=getSelection();sel.removeAllRanges();sel.addRange(r);message('Protokoll markiert – mit Strg+C kopieren.')}});
+bind('#logclear',async()=>{if(!confirm('Protokoll wirklich löschen?'))return;await command('/api/log/clear');$('#log').hidden=true;message('Protokoll gelöscht.')});
 bind('#restart',async()=>{await command('/api/restart');message('ESP startet neu …')});
 for(let id of ['resume','autoquery'])$('#'+id).onchange=async e=>{try{await command('/api/settings',{[id]:e.target.checked?1:0});message('Einstellung gespeichert.')}catch(err){message('Fehler: '+err.message)}};
 function staticVisible(){$('#static').hidden=$('#net [name=ipmode]').value!=='static'}$('#net [name=ipmode]').onchange=staticVisible;

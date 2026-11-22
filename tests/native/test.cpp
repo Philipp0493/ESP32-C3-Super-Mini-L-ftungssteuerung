@@ -34,6 +34,8 @@ int main() {
   assert(WiFi.apStarts == 1 && WiFi.apPassword == SETUP_PASSWORD && apActive);
   assert(apiKey.length() == 32 && prefs.getString("key", "") == apiKey);
   assert(validHostName(hostName) && WiFi.hostname == hostName);
+  assert(bootNo == 1 && ramLog.count >= 1 && persistLog.count == 1);  // Startereignis
+  fakeResetReason = ESP_RST_SW;  // weitere simulierte Neustarts behalten das RAM-Protokoll
   apiKey = "test-key-0123456789";
   autoQuery = false;  // für deterministische Zeitabläufe; separat getestet
 
@@ -247,8 +249,53 @@ int main() {
   assert(prefs.getString("key", "") == apiKey && prefs.getBool("enabled", false));
   fakeBootPin = HIGH;
 
+  // ---------- Protokoll
+  auto has = [](const String &text, const char *needle) {
+    if (text.find(needle) == std::string::npos) { std::cerr << "Protokoll ohne '" << needle << "'\n" << text; assert(false); }
+  };
+  web.args = {{"key", "wrong"}}; web.routes["/api/log"](); assert(web.code == 401);
+  web.args = {{"key", apiKey}}; web.routes["/api/log"](); assert(web.code == 200);
+  String logBody = web.body;
+  for (auto n : {"Firmware: " FW_VERSION, "Start #", "Grund letzter Start", "Befehl von 192.0.2.10", "Betriebsart -> WRG Stufe",
+                 "Abgelehnt 401", "Abgelehnt 400", "Boost beendet", "Filteralarm-Reset", "Luefter antwortet nicht",
+                 "Einrichtungs-WLAN", "WLAN verbunden", "Firmware-Update erfolgreich", "Komplettimage", "BOOT-Taster",
+                 "=== Wichtige Ereignisse", "=== Ereignisprotokoll", "Erste Luefterantwort", "ungueltige Antwort"})
+    has(logBody, n);
+  // Keine Geheimnisse im Protokoll
+  for (auto secret : {apiKey.c_str(), "test-key-0123456789", "Geheim-123", "examplepass"})
+    assert(logBody.find(secret) == std::string::npos);
+  // WLAN-Trennungsgrund aus dem Ereignis-Callback, Wiederholungen nur einmal
+  arduino_event_info_t info{}; info.wifi_sta_disconnected.reason = 202;
+  WiFi.connection = 0; WiFi.eventCb(ARDUINO_EVENT_WIFI_STA_DISCONNECTED, info); tick(fakeNow + 1);
+  uint16_t c = ramLog.count; uint16_t h = ramLog.head;
+  WiFi.eventCb(ARDUINO_EVENT_WIFI_STA_DISCONNECTED, info); tick(fakeNow + 1); assert(ramLog.head == h && ramLog.count == c);
+  has(logText(), "Anmeldung fehlgeschlagen");
+  WiFi.connection = 1; tick(fakeNow + 1);
+  // Unerwartete Busdaten werden gesammelt gemeldet
+  bus.in = STX + "01290028" + ETX; lastStrayReport = fakeNow - STRAY_REPORT_MS; tick(fakeNow + 1); has(logText(), "Unerwartete Daten auf dem Bus: 10 Byte");
+  // Ringpuffer: nur die letzten LOG_SIZE Einträge, älteste zuerst
+  for (int i = 0; i < 300; i++) LOG("Testeintrag %03d", i);
+  assert(ramLog.count == LOG_SIZE);
+  String full = logText(); has(full, "Testeintrag 299");
+  assert(full.find("Testeintrag 099") == std::string::npos && full.find("Testeintrag 100") != std::string::npos);
+  assert(full.find("Testeintrag 100") < full.find("Testeintrag 299"));
+  // Lange Meldungen werden gekürzt, nie übergelaufen
+  LOG("%s", std::string(500, 'x').c_str()); assert(strlen(ramLog.entries[(ramLog.head + LOG_SIZE - 1) % LOG_SIZE].msg) == LOG_MSG_LEN - 1);
+  // Neustart nach Absturz: RAM-Protokoll bleibt, Grund wird dauerhaft vermerkt
+  uint16_t before = bootNo; fakeResetReason = ESP_RST_PANIC; reboot();
+  assert(bootNo == before + 1); full = logText(); has(full, "Testeintrag 299"); has(full, "ABSTURZ (Panic)");
+  // Stromausfall: RAM-Protokoll leer, wichtige Ereignisse (dauerhaft) bleiben
+  fakeResetReason = ESP_RST_POWERON; reboot(); full = logText();
+  assert(full.find("Testeintrag") == std::string::npos); has(full, "ABSTURZ (Panic)"); has(full, "Einschalten/Stromausfall");
+  // Beschädigter Speicher wird erkannt
+  ramLog.head = 9999; fakeResetReason = ESP_RST_SW; reboot(); assert(ramLog.head < LOG_SIZE && ramLog.count < 10 && logText().find("Testeintrag") == std::string::npos);
+  prefs.putBytes("implog", "kaputt", 6); reboot(); assert(persistLog.count == 1);
+  // Löschen
+  apiKey = prefs.getString("key", "");
+  call("/api/log/clear", {{"key", apiKey}}); assert(web.code == 200 && persistLog.count == 0 && ramLog.count == 1);
+
   // ---------- millis()-Überlauf
   assert(elapsed(500, 0xfffffff0, 500)); assert(!elapsed(10, 0xfffffff0, 500));
   std::cout << "PASS: v2 firmware – Zyklus, Motorpausen, Boost, Statusabfrage (manuell/automatisch), Filter-Reset, "
-               "Persistenz, Passwortschutz, API-Schlüssel, WLAN/Einrichtungs-WLAN, statische IP, OTA, BOOT-Reset, Überlauf\n";
+               "Persistenz, Passwortschutz, API-Schlüssel, WLAN/Einrichtungs-WLAN, statische IP, OTA, BOOT-Reset, Protokoll, Überlauf\n";
 }

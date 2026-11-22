@@ -48,6 +48,13 @@ wechseln.
 - Option **„WLAN-Sendeleistung reduzieren“** gegen die bekannten WLAN-Probleme des
   ESP32-C3 Super Mini.
 
+**Fehlersuche (Firmware 2.1.0)**
+- **Ereignisprotokoll** auf der ESP-Seite (Abschnitt 7) zum Anzeigen, Herunterladen und
+  Kopieren: Starts mit Grund (Stromausfall/Absturz/Unterspannung), WLAN mit Trennungsgrund,
+  Befehle mit Absender, abgelehnte Befehle, Lüfterantworten mit Rohdaten, Updates.
+  Die letzten 200 Einträge überstehen Neustarts, wichtige Ereignisse auch Stromausfälle.
+  Uhrzeit per NTP. Details: [FEHLERSUCHE.md](FEHLERSUCHE.md)
+
 **Code**
 - Firmware neu strukturiert (Betriebsarten als `enum`, benannte Zeitkonstanten,
   kommentierte Funktionen), Telegramme unverändert gegenüber v1 und gegen das
