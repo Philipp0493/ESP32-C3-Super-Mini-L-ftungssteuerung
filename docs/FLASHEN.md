@@ -1,47 +1,60 @@
-# Flashen mit grafischer Oberfläche
+# Flashen
 
-Du brauchst keinen Python-Befehl. Am einfachsten ist Espressifs grafischer
-Browser-Flasher auf einem PC mit Chrome oder Edge und WebSerial-Unterstützung:
+Pro Version gibt es drei Dateien. Welche du brauchst, hängt davon ab, ob die
+Einstellungen (WLAN, API-Schlüssel, Freigabe) erhalten bleiben sollen:
+
+| Datei | Wie | Wohin | Einstellungen |
+|---|---|---|---|
+| `ambientika-c3-v2-komplett-0x0.bin` | USB | **0x0** | werden **gelöscht** (neuer API-Schlüssel) – für neue ESPs |
+| `ambientika-c3-v2-update-0xE000.bin` | USB | **0xE000** | bleiben erhalten – für ESPs, auf denen schon v1/v2 läuft |
+| `ambientika-c3-v2-ota.bin` | ESP-Webseite, Tab System | – | bleiben erhalten – nur wenn bereits v2 läuft |
+
+Dateien: [v2](../dist/v2/) · [v1](../dist/v1/) · Wechsel zwischen den Versionen: [VERSIONEN.md](VERSIONEN.md)
+
+Auf GitHub die Dateiseite öffnen und **„Download raw file“** nutzen – nicht die
+GitHub-HTML-Seite als `.bin` speichern.
+
+## Per USB mit dem Browser-Flasher
+
+Espressifs Browser-Flasher funktioniert in Chrome oder Edge am PC:
 https://espressif.github.io/esptool-js/
 
-Der Flasher läuft als Webseite, greift aber auf den per USB angeschlossenen ESP
-zu. Die spätere Lüfter-Webseite läuft unabhängig davon auf deinem ESP.
+1. ESP mit USB-Datenkabel am PC anschließen. Der Lüfter kann angeschlossen bleiben,
+   sicherer ist es, vorher auf der ESP-Seite „Aus“ zu wählen.
+2. Den Browser-Flasher öffnen, Baudrate **115200**, **Connect** drücken und den USB-Port
+   des ESP wählen. Chiptyp muss **ESP32-C3** sein.
+3. Klappt die Verbindung nicht: BOOT gedrückt halten, RESET kurz drücken, BOOT loslassen,
+   erneut Connect.
+4. **Eine** Zeile ausfüllen:
 
-1. [Binary herunterladen](../dist/ambientika-c3-single-fan.bin). Auf GitHub die
-   Dateiseite öffnen und „Download raw file“ nutzen oder das [ZIP](../dist/ambientika-c3-testpaket.zip)
-   herunterladen und entpacken. Nicht die GitHub-HTML-Seite als `.bin` speichern.
-2. ESP mit USB-Datenkabel am PC anschließen. Für das erste Flashen kann der
-   Lüfter abgeklemmt bleiben. Andere serielle Programme schließen.
-3. Den Browser-Flasher öffnen. Baudrate zunächst **115200** wählen.
-4. **Connect** drücken und den USB-Port des ESP auswählen. Chiptyp muss
-   **ESP32-C3** sein, Flashgröße **4 MB**.
-5. Wenn die Verbindung nicht klappt: BOOT gedrückt halten, RESET kurz drücken,
-   BOOT loslassen und Connect erneut versuchen. USB-Port kann sich dabei ändern.
-6. Eine Datei hinzufügen, falls nötig über **Add File**. Nur eine Zeile verwenden:
+   | Feld | Neuer ESP | Update (Einstellungen behalten) |
+   |---|---|---|
+   | Flash Address | `0x0` | `0xE000` |
+   | File | `…-komplett-0x0.bin` | `…-update-0xE000.bin` |
 
-   | Feld | Einstellung |
-   |---|---|
-   | Flash Address | **0x0** |
-   | File | `ambientika-c3-single-fan.bin` |
-   | Flash Mode | `keep` oder `dio` |
-   | Flash Frequency | `keep` (Image enthält 40 MHz) |
-   | Flash Size | `keep` (Image enthält 4 MB) |
-   | Erase all | für den normalen Ablauf nicht erforderlich |
+   Flash Mode/Frequency/Size auf `keep` lassen. **Kein „Erase Flash“** – das löscht
+   alle Einstellungen.
+5. **Program** drücken, Abschluss abwarten, **Disconnect**, am ESP kurz **RESET** drücken
+   (ohne BOOT).
 
-7. **Program** drücken und den erfolgreichen Abschluss abwarten.
-8. **Disconnect** drücken. RESET kurz drücken, ohne BOOT gedrückt zu halten.
-9. Mit der [WLAN-Einrichtung](../README.md#3-einrichten--ohne-usb-terminal) fortfahren.
+Die Adresse muss zur Datei passen: Das Komplettimage gehört an 0x0, das Update-Image an
+0xE000. Das Update-Image überschreibt den Einstellungsspeicher (0x9000–0xDFFF) nicht.
 
-Das Gesamtimage enthält Bootloader und Anwendung; es gehört an **0x0**, nicht
-an 0x10000. Erneutes Flashen setzt WLAN-Einstellungen und API-Schlüssel zurück.
-Ein vollständiges „Erase Flash“ löscht ebenfalls sämtliche Geräteeinstellungen.
+Als installiertes Windows-Programm eignet sich auch Espressifs **Flash Download Tools**
+(https://www.espressif.com/en/support/download/other-tools): ESP32-C3 / UART, eine Datei
+mit der passenden Adresse, DIO, 40 MHz, 4 MB.
 
-Falls der Browser keinen USB-Port anbietet: aktuellen Chrome/Edge auf dem PC
-verwenden, Datenkabel prüfen, serielle Programme schließen und USB-Bootmodus
-versuchen. Smartphones/Tablets sind für diesen Ablauf nicht vorgesehen.
+## Über die Weboberfläche (ab v2)
 
-Als installiertes Windows-Programm ist auch Espressifs **Flash Download Tools**
-geeignet (offizielle Bezugsquelle https://www.espressif.com/en/support/download/other-tools).
-ESP32-C3 / UART, eine BIN an 0x0, DIO, 40 MHz, 4 MB bzw. 32 Mbit wählen und den
-passenden COM-Port einstellen. Menübezeichnungen unterscheiden sich je Version.
-Der Browser-Flasher ist hier der dokumentierte Standardweg.
+1. ESP-Seite öffnen, im Tab **Lüfter** „Aus“ wählen und eine Sekunde warten
+   (bei laufendem Lüfter lehnt der ESP das Update ab).
+2. Tab **System → Firmware-Update**: Datei `…-ota.bin` wählen, **Firmware hochladen**.
+3. Nach ca. 20 s startet der ESP neu. Mit aktivierter Wiederherstellung läuft die
+   Lüftung danach in der zuletzt gespeicherten Betriebsart.
+
+Das Komplettimage wird hier erkannt und abgelehnt. Schlägt ein Update fehl, läuft die
+bisherige Firmware weiter.
+
+## Nach dem ersten Flashen (neuer ESP)
+
+Weiter mit der [Schritt-für-Schritt-Anleitung](ANLEITUNG.md#5-ersten-lüfter-einrichten).
