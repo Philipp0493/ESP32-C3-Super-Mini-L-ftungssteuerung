@@ -1,19 +1,24 @@
 // Ambientika-Lüftersteuerung für ESP32-C3 Super Mini + RS485 – Firmware v2
 // Protokollgrundlage: Südwind „Programmierung über RS485“, Juni 2025.
-// Ein ESP steuert genau einen Lüfter (Master mit Wandpanel), kein Slave-Betrieb.
+// Ein ESP steuert genau einen Lüfter (Master mit Wandpanel). Mehrere Lüfter = mehrere ESPs;
+// sie finden sich per mDNS und können ihre Wechselzyklen über die Uhrzeit gegenläufig takten.
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <DNSServer.h>
 #include <Preferences.h>
 #include <Update.h>
 #include <ESPmDNS.h>
+#include <mdns.h>
 #include <esp_system.h>
 #include <esp_attr.h>
+#include <esp_task_wdt.h>
+#include <sys/time.h>
 #include <time.h>
 #include <stdarg.h>
 #include "ui.h"
 
-#define FW_VERSION "2.1.0"
+#define FW_VERSION "2.2.0"
 
 // ---------------------------------------------------------------- Hardware
 constexpr int RX_PIN = 4, TX_PIN = 5;
@@ -23,6 +28,7 @@ constexpr int BOOT_PIN = 9;  // BOOT-Taster des Super Mini, im Betrieb als Reset
 constexpr uint32_t FRAME_INTERVAL_MS = 500;            // Telegrammtakt laut Hersteller
 constexpr uint32_t MOTOR_PAUSE_MS = 10000;             // Pause vor jedem (Neu-)Start / Richtungswechsel
 constexpr uint32_t CYCLE_MS = 60000;                   // WRG/Automatik: 60 s je Richtung
+constexpr uint32_t SYNC_PERIOD_MS = 2 * (CYCLE_MS + MOTOR_PAUSE_MS);  // 140 s: Zuluft, Pause, Abluft, Pause
 constexpr uint32_t BOOST_MS = 20UL * 60 * 1000;        // Boost-Dauer
 constexpr uint32_t QUERY_SILENCE_MS = 3000;            // Sendesperre nach Statusabfrage
 constexpr uint32_t AUTO_QUERY_MS = 5UL * 60 * 1000;    // automatische Statusabfrage
@@ -31,13 +37,19 @@ constexpr uint8_t FILTER_RESET_FRAMES = 4;             // 4 × 500 ms Reset-Tele
 constexpr uint32_t AP_GRACE_MS = 120000;               // so lange ohne WLAN → Einrichtungs-WLAN
 constexpr uint32_t AP_LINGER_MS = 60000;               // nach Verbindung noch offen lassen
 constexpr uint32_t AP_DEFAULT_PW_WINDOW_MS = 600000;   // Standardpasswort nur 10 Minuten
+constexpr uint32_t STA_RETRY_MS = 60000;               // bei offenem Einrichtungs-WLAN nur minütlich neu verbinden
 constexpr uint32_t FACTORY_RESET_HOLD_MS = 10000;      // BOOT-Taster 10 s halten
 constexpr uint32_t RESTART_DELAY_MS = 1500;
-constexpr uint32_t HEARTBEAT_MS = 6UL * 3600 * 1000;    // Lebenszeichen im Protokoll
-constexpr uint32_t STRAY_REPORT_MS = 3600UL * 1000;     // unerwartete Busdaten höchstens stündlich melden
+constexpr uint32_t HEARTBEAT_MS = 6UL * 3600 * 1000;   // Lebenszeichen im Protokoll
+constexpr uint32_t STRAY_REPORT_MS = 3600UL * 1000;    // unerwartete Busdaten höchstens stündlich melden
+constexpr uint32_t PEER_FIRST_SCAN_MS = 20000;         // erste Suche nach anderen Lüftern nach WLAN-Verbindung
+constexpr uint32_t PEER_SCAN_MS = 10UL * 60 * 1000;    // danach alle 10 Minuten
+constexpr uint32_t PEER_MANUAL_SCAN_MS = 15000;        // manuelle Suche höchstens alle 15 s
+constexpr uint32_t WDT_TIMEOUT_S = 30;                 // Watchdog: hängt die Firmware, startet der ESP neu
 
 constexpr const char *SETUP_PASSWORD = "Lueftung-Start";  // nur solange kein Gerätepasswort gesetzt ist
 constexpr const char *WEB_USER = "admin";
+constexpr const char *TZ_EUROPE_BERLIN = "CET-1CEST,M3.5.0,M10.5.0/3";
 
 // ---------------------------------------------------------------- Telegramme
 constexpr const char *PAYLOAD_OFF = "01000001";           // Motor aus, Klappe geschlossen
@@ -50,6 +62,9 @@ enum Mode : uint8_t { OFF = 0, WRG = 1, AUTO = 2, SUPPLY = 3, EXTRACT = 4, PAUSE
 const char *const MODE_NAMES[] = {"off", "wrg", "auto", "supply", "extract", "pause", "boost"};
 constexpr uint8_t MODE_COUNT = 7;
 
+// Gegenlauf-Gruppe: 0 = eigener Takt, 1 = Gruppe A, 2 = Gruppe B (um eine halbe Periode versetzt)
+constexpr uint8_t GROUP_NONE = 0, GROUP_A = 1, GROUP_B = 2;
+
 struct Settings {
   Mode mode;
   uint8_t level, humidity;
@@ -61,13 +76,15 @@ struct Settings {
 
 HardwareSerial bus(1);
 WebServer web(80);
+DNSServer dns;
 Preferences prefs;
 
 // ---------------------------------------------------------------- Gespeicherte Konfiguration
-String apiKey, devicePassword, hostName, wifiSsid;
+String apiKey, devicePassword, hostName, displayName, wifiSsid;
 bool enabled = false;          // Busausgabe freigegeben
 bool resumeAfterBoot = true;   // letzte Betriebsart nach Neustart wiederherstellen
 bool autoQuery = true;         // Sensorstatus automatisch abfragen
+uint8_t syncGroup = GROUP_NONE;
 
 // ---------------------------------------------------------------- Betriebszustand
 Mode mode = OFF;
@@ -95,11 +112,22 @@ int light = -1, filter1 = -1, filter2 = -1, moist = -1;
 
 // WLAN / System
 bool apActive = false, apWindowExpired = false, mdnsStarted = false;
-uint32_t apStarted = 0, disconnectedSince = 0, connectedSince = 0;
+uint32_t apStarted = 0, disconnectedSince = 0, connectedSince = 0, lastStaRetry = 0;
 bool restartPending = false;
 uint32_t restartRequested = 0;
 bool bootPressed = false;
 uint32_t bootPressedSince = 0;
+
+// Andere Lüfter im Netz (per mDNS gefunden)
+struct Peer {
+  String name, host, ip;
+};
+constexpr uint8_t MAX_PEERS = 16;
+Peer peers[MAX_PEERS];
+uint8_t peerCount = 0;
+mdns_search_once_t *peerSearch = nullptr;
+uint32_t lastPeerScan = 0;
+bool peerScanDone = false;
 
 // Firmware-Update
 bool updateAccepted = false;
@@ -154,6 +182,18 @@ void scheduleRestart(const char *reason) {
   restartRequested = millis();
 }
 
+// Uhrzeit in ms seit 1970 (per NTP), 0 solange unbekannt. Für Tests austauschbar.
+#ifdef AMBI_CLOCK_MS
+uint64_t clockMs() { return AMBI_CLOCK_MS(); }
+#else
+uint64_t clockMs() {
+  struct timeval tv;
+  gettimeofday(&tv, nullptr);
+  return tv.tv_sec > 1700000000 ? uint64_t(tv.tv_sec) * 1000 + tv.tv_usec / 1000 : 0;
+}
+#endif
+uint32_t epochNow() { return uint32_t(clockMs() / 1000); }
+
 bool parseMode(const String &s, Mode &out) {
   if (s.length() == 1 && s[0] >= '0' && s[0] < char('0' + MODE_COUNT)) {
     out = Mode(s[0] - '0');
@@ -198,11 +238,34 @@ String jsonEscape(const String &s) {
   return out;
 }
 
+String xmlEscape(const String &s) {
+  String out;
+  for (unsigned i = 0; i < s.length(); i++) {
+    char c = s[i];
+    if (c == '&') out += "&amp;";
+    else if (c == '<') out += "&lt;";
+    else if (c == '>') out += "&gt;";
+    else if (c == '"') out += "&quot;";
+    else out += c;
+  }
+  return out;
+}
+
 bool validHostName(const String &s) {
   if (s.isEmpty() || s.length() > 32 || s[0] == '-' || s[s.length() - 1] == '-') return false;
   for (unsigned i = 0; i < s.length(); i++) {
     char c = s[i];
     if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) return false;
+  }
+  return true;
+}
+
+// Anzeigename: UTF-8 erlaubt (Umlaute), keine Steuer- und Sonderzeichen, die JSON/XML/HTML stören.
+bool validDisplayName(const String &s) {
+  if (s.isEmpty() || s.length() > 40) return false;
+  for (unsigned i = 0; i < s.length(); i++) {
+    uint8_t c = s[i];
+    if (c < 0x20 || c == '"' || c == '\\' || c == '<' || c == '>' || c == '&') return false;
   }
   return true;
 }
@@ -217,11 +280,13 @@ bool validSecret(const String &s, unsigned minLen, unsigned maxLen, bool alnumOn
   return true;
 }
 
-uint32_t epochNow() {
-  time_t t = time(nullptr);
-  return t > 1700000000 ? uint32_t(t) : 0;  // vor der NTP-Synchronisation unbekannt
+bool validWifi(const String &s, const String &p) {
+  return !s.isEmpty() && s.length() <= 32 && p.length() <= 63 && (p.isEmpty() || p.length() >= 8);
 }
 
+const char *groupName(uint8_t g) { return g == GROUP_A ? "A" : g == GROUP_B ? "B" : "-"; }
+
+// ================================================================ Protokoll-Funktionen
 uint32_t ramLogCheck() { return ramLog.magic ^ (uint32_t(ramLog.head) << 16 | ramLog.count) ^ 0x5A5A5A5Au; }
 
 void addEntry(LogEntry *entries, uint16_t size, uint16_t &head, uint16_t &count, const LogEntry &e) {
@@ -319,7 +384,14 @@ void appendEntries(String &s, const LogEntry *entries, uint16_t size, uint16_t h
   for (uint16_t i = 0; i < count; i++) s += formatEntry(entries[(head + size - count + i) % size]);
 }
 
-String modeDescription(Mode m, uint8_t l, uint8_t h, bool n);
+String modeDescription(Mode m, uint8_t l, uint8_t h, bool n) {
+  static const char *const LABELS[] = {"Aus", "WRG", "Automatik", "Zuluft", "Abluft", "Pause", "Boost"};
+  String s = LABELS[m];
+  if (m == WRG || m == SUPPLY || m == EXTRACT) s += " Stufe " + String((int)l);
+  if (m == AUTO) s += String(" Feuchte ") + String((int)h) + (n ? " Nacht" : " Tag");
+  return s;
+}
+
 String logText();
 
 // ================================================================ Lüfterlogik
@@ -378,6 +450,27 @@ void buildPayload(char out[9]) {
   snprintf(out, 9, "01%02X00%02X", cmd, cmd ^ 1);
 }
 
+// Gemeinsamer Zeitplan für Gegenlauf-Gruppen (140-s-Periode aus der NTP-Uhrzeit):
+// Gruppe A: 0–60 s Zuluft, 60–70 s Pause, 70–130 s Abluft, 130–140 s Pause. Gruppe B um 70 s versetzt.
+// Rückgabe: 0 = Zuluft, 1 = Pause, 2 = Abluft, -1 = kein Gruppentakt (keine Gruppe oder Uhrzeit unbekannt).
+int scheduleSlot(uint32_t &remainingMs) {
+  uint64_t ms = clockMs();
+  if (syncGroup == GROUP_NONE || !ms) return -1;
+  uint32_t pos = uint32_t((ms + (syncGroup == GROUP_B ? SYNC_PERIOD_MS / 2 : 0)) % SYNC_PERIOD_MS);
+  if (pos < CYCLE_MS) { remainingMs = CYCLE_MS - pos; return 0; }
+  pos -= CYCLE_MS;
+  if (pos < MOTOR_PAUSE_MS) { remainingMs = MOTOR_PAUSE_MS - pos; return 1; }
+  pos -= MOTOR_PAUSE_MS;
+  if (pos < CYCLE_MS) { remainingMs = CYCLE_MS - pos; return 2; }
+  remainingMs = SYNC_PERIOD_MS - CYCLE_MS - MOTOR_PAUSE_MS - CYCLE_MS - pos;
+  return 1;
+}
+
+bool groupClockActive() {
+  uint32_t r;
+  return scheduleSlot(r) >= 0;
+}
+
 String phaseName() {
   if (!enabled) return "disabled";
   if (filterResetActive) return "filter_reset";
@@ -396,6 +489,22 @@ uint32_t boostRemainingS() {
   if (waiting) return BOOST_MS / 1000;
   uint32_t run = millis() - boostStart;
   return run >= BOOST_MS ? 0 : (BOOST_MS - run) / 1000;
+}
+
+// Sekunden bis zum nächsten Phasenwechsel (Pause → Lauf, Richtungswechsel, Boost-Ende); 0 = keiner geplant.
+uint32_t phaseRemainingS() {
+  if (!enabled || filterResetActive || mode == OFF || mode == PAUSE) return 0;
+  uint32_t now = millis(), run = now - phaseStart, slotRest = 0;
+  int slot = cycling(mode) ? scheduleSlot(slotRest) : -1;
+  if (waiting) {
+    uint32_t pauseRest = !pauseSent ? MOTOR_PAUSE_MS : run >= MOTOR_PAUSE_MS ? 0 : MOTOR_PAUSE_MS - run;
+    if (slot == 1 && slotRest > pauseRest) pauseRest = slotRest;
+    return (pauseRest + 999) / 1000;
+  }
+  if (mode == BOOST) return boostRemainingS();
+  if (slot >= 0) return (slotRest + 999) / 1000;
+  if (cycling(mode)) return run >= CYCLE_MS ? 0 : (CYCLE_MS - run + 999) / 1000;
+  return 0;
 }
 
 int filterAlarm() { return (filter1 < 0 && filter2 < 0) ? -1 : (filter1 == 1 || filter2 == 1) ? 1 : 0; }
@@ -436,7 +545,7 @@ void readBus(uint32_t now) {
       frame = "";
       inFrame = true;
     } else if (c == 3) {
-      if (inFrame && receiving && !elapsed(now, receiveStart, QUERY_SILENCE_MS)) parseReply(now);
+      if (inFrame && inWindow) parseReply(now);
       frame = "";
       inFrame = false;
     } else if (inFrame) {
@@ -504,16 +613,34 @@ void busLoop(uint32_t now) {
     pauseSent = true;
     return;
   }
-  if (waiting && elapsed(now, phaseStart, MOTOR_PAUSE_MS)) {
-    waiting = false;
-    phaseStart = now;
-    if (mode == BOOST) boostStart = now;
-  }
-  if (!waiting && cycling(mode) && elapsed(now, phaseStart, CYCLE_MS)) {
-    supply = !supply;  // Richtungswechsel nur über Motorpause
-    waiting = true;
-    pauseSent = false;
-    return;
+
+  uint32_t slotRest;
+  int slot = cycling(mode) ? scheduleSlot(slotRest) : -1;
+  if (slot >= 0) {
+    // Gruppentakt: Richtung folgt dem gemeinsamen Zeitplan, jede Änderung weiterhin nur über ≥ 10 s Pause.
+    if (waiting) {
+      if (elapsed(now, phaseStart, MOTOR_PAUSE_MS) && slot != 1) {
+        waiting = false;
+        supply = slot == 0;
+        phaseStart = now;
+      }
+    } else if (slot == 1 || (slot == 0) != supply) {
+      waiting = true;
+      pauseSent = false;
+      return;
+    }
+  } else {
+    if (waiting && elapsed(now, phaseStart, MOTOR_PAUSE_MS)) {
+      waiting = false;
+      phaseStart = now;
+      if (mode == BOOST) boostStart = now;
+    }
+    if (!waiting && cycling(mode) && elapsed(now, phaseStart, CYCLE_MS)) {
+      supply = !supply;  // Richtungswechsel nur über Motorpause
+      waiting = true;
+      pauseSent = false;
+      return;
+    }
   }
 
   if (!elapsed(now, lastSend, FRAME_INTERVAL_MS)) return;
@@ -541,19 +668,30 @@ void busLoop(uint32_t now) {
 }
 
 // ================================================================ Status
+String currentIp() {
+  if (prefs.getString("ipmode", "dhcp") == "static") return prefs.getString("ip", "");
+  return WiFi.localIP().toString();
+}
+
 String statusJson() {
   uint32_t now = millis();
   String s = "{";
   s += "\"version\":\"" FW_VERSION "\"";
+  s += ",\"name\":\"" + jsonEscape(displayName) + "\"";
+  s += ",\"hostname\":\"" + hostName + "\"";
   s += ",\"enabled\":" + String(enabled ? "true" : "false");
   s += ",\"mode\":\"" + String(MODE_NAMES[mode]) + "\"";
   s += ",\"mode_code\":" + String((int)mode);
   s += ",\"phase\":\"" + phaseName() + "\"";
   s += ",\"direction\":" + String(directionCode());
+  s += ",\"phase_remaining_s\":" + String(phaseRemainingS());
   s += ",\"level\":" + String((int)level);
   s += ",\"night\":" + String(night ? "true" : "false");
   s += ",\"humidity_level\":" + String((int)humidity);
   s += ",\"boost_remaining_s\":" + String(boostRemainingS());
+  s += ",\"sync_group\":" + String((int)syncGroup);
+  s += ",\"group_clock\":" + String(groupClockActive() ? "true" : "false");
+  s += ",\"time_synced\":" + String(epochNow() ? "true" : "false");
   s += ",\"device_status_received\":" + String(hasReply ? "true" : "false");
   s += ",\"status_age_ms\":" + (hasReply ? String(uint32_t(now - lastReply)) : String("null"));
   s += ",\"comm_ok\":" + String(commOk);
@@ -577,12 +715,14 @@ String loxoneText() {
   s += "night=" + String(night ? 1 : 0) + "\n";
   s += "enabled=" + String(enabled ? 1 : 0) + "\n";
   s += "direction=" + String(directionCode()) + "\n";
+  s += "phase_remaining=" + String(phaseRemainingS()) + "\n";
   s += "boost_remaining=" + String(boostRemainingS()) + "\n";
   s += "dark=" + String(light) + "\n";
   s += "filter=" + String(filterAlarm()) + "\n";
   s += "humidity_alarm=" + String(moist) + "\n";
   s += "comm_ok=" + String(commOk) + "\n";
   s += "status_age=" + (hasReply ? String(uint32_t(millis() - lastReply) / 1000) : String(-1)) + "\n";
+  s += "sync_group=" + String((int)syncGroup) + "\n";
   s += "rssi=" + String((int)WiFi.RSSI()) + "\n";
   s += "uptime=" + String(millis() / 1000) + "\n";
   return s;
@@ -591,19 +731,81 @@ String loxoneText() {
 String settingsJson() {
   String s = "{";
   s += "\"version\":\"" FW_VERSION "\"";
+  s += ",\"name\":\"" + jsonEscape(displayName) + "\"";
   s += ",\"hostname\":\"" + hostName + "\"";
   s += ",\"ap_name\":\"" + apName() + "\"";
   s += ",\"ap_active\":" + String(apActive ? "true" : "false");
   s += ",\"has_password\":" + String(devicePassword.isEmpty() ? "false" : "true");
+  s += ",\"enabled\":" + String(enabled ? "true" : "false");
   s += ",\"ssid\":\"" + jsonEscape(wifiSsid) + "\"";
+  s += ",\"connected\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false");
+  s += ",\"ip\":\"" + WiFi.localIP().toString() + "\"";
   s += ",\"ipmode\":\"" + prefs.getString("ipmode", "dhcp") + "\"";
-  s += ",\"ip\":\"" + prefs.getString("ip", "") + "\"";
+  s += ",\"static_ip\":\"" + prefs.getString("ip", "") + "\"";
   s += ",\"mask\":\"" + prefs.getString("mask", "255.255.255.0") + "\"";
   s += ",\"gw\":\"" + prefs.getString("gw", "") + "\"";
   s += ",\"dns\":\"" + prefs.getString("dns", "") + "\"";
   s += ",\"txlow\":" + String(prefs.getBool("txlow", false) ? "true" : "false");
   s += ",\"resume\":" + String(resumeAfterBoot ? "true" : "false");
   s += ",\"autoquery\":" + String(autoQuery ? "true" : "false");
+  s += ",\"sync_group\":" + String((int)syncGroup);
+  s += ",\"time\":\"" + (epochNow() ? formatEpoch(epochNow()) : String("")) + "\"";
+  s += ",\"uptime_s\":" + String(millis() / 1000);
+  s += ",\"boot\":" + String((unsigned)bootNo);
+  s += ",\"reset_reason\":\"" + String(resetReasonText(resetReason)) + "\"";
+  s += "}";
+  return s;
+}
+
+// Vorlagen zum Import in Loxone Config (Virtueller Ausgang / Virtueller HTTP-Eingang).
+String loxoneCmd(const char *title, const String &on, const String &off, bool analog) {
+  return "\t<VirtualOutCmd Title=\"" + String(title) + "\" Comment=\"\" CmdOnMethod=\"GET\" CmdOn=\"" + xmlEscape(on) +
+         "\" CmdOnHTTP=\"\" CmdOnPost=\"\" CmdOffMethod=\"GET\" CmdOff=\"" + xmlEscape(off) +
+         "\" CmdOffHTTP=\"\" CmdOffPost=\"\" Analog=\"" + (analog ? "true" : "false") + "\" Repeat=\"0\" RepeatRate=\"0\"/>\n";
+}
+
+String loxoneOutputXml() {
+  String c = "/api/control?key=" + apiKey;
+  String s = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
+  s += "<VirtualOut Title=\"" + xmlEscape(displayName) + "\" Comment=\"Ambientika-ESP " + hostName + "\" Address=\"http://" +
+       currentIp() + "\" CmdInit=\"\" CloseAfterSend=\"true\" CmdSep=\"\">\n";
+  s += loxoneCmd("Betriebsart (0-6)", c + "&mode=<v>", "", true);
+  s += loxoneCmd("Stufe (0-3)", c + "&level=<v>", "", true);
+  s += loxoneCmd("Nachtbetrieb", c + "&night=1", c + "&night=0", false);
+  s += loxoneCmd("Feuchtestufe 3", c + "&humidity=3", c + "&humidity=2", false);
+  s += loxoneCmd("Boost", c + "&mode=boost", "", false);
+  s += loxoneCmd("Filter-Reset", "/api/filterreset?key=" + apiKey, "", false);
+  s += "</VirtualOut>\n";
+  return s;
+}
+
+String loxoneInputXml() {
+  static const char *const ITEMS[][2] = {
+      {"Betriebsart Ist", "mode"},   {"Stufe Ist", "level"},        {"Richtung", "direction"},
+      {"Boost Restzeit", "boost_remaining"}, {"Filteralarm", "filter"}, {"Feuchtealarm", "humidity_alarm"},
+      {"Daemmerung", "dark"},        {"Luefter antwortet", "comm_ok"}, {"Bus freigegeben", "enabled"},
+      {"WLAN-Empfang", "rssi"},      {"Laufzeit", "uptime"}};
+  String s = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
+  s += "<VirtualInHttp Title=\"" + xmlEscape(displayName) + " Status\" Comment=\"Ambientika-ESP " + hostName +
+       "\" Address=\"http://" + currentIp() + "/api/loxone\" HintText=\"\" PollingTime=\"30\">\n";
+  for (auto &item : ITEMS)
+    s += "\t<VirtualInHttpCmd Title=\"" + String(item[0]) + "\" Comment=\"\" Check=\"" + item[1] +
+         "=\\v\" Signed=\"true\" Analog=\"true\" SourceValLow=\"0\" DestValLow=\"0\" SourceValHigh=\"100\" "
+         "DestValHigh=\"100\" DefVal=\"0\" MinVal=\"-10000\" MaxVal=\"10000\"/>\n";
+  s += "</VirtualInHttp>\n";
+  return s;
+}
+
+// Vorlage für weitere Lüfter: gleiche WLAN-/Passwort-Einstellungen, auf Wunsch gleicher API-Schlüssel.
+String configExportJson(bool withKey) {
+  String s = "{\"type\":\"ambientika-vorlage\",\"v\":1";
+  s += ",\"ssid\":\"" + jsonEscape(wifiSsid) + "\"";
+  s += ",\"pass\":\"" + jsonEscape(prefs.getString("pass", "")) + "\"";
+  s += ",\"devpw\":\"" + jsonEscape(devicePassword) + "\"";
+  if (withKey) s += ",\"key\":\"" + apiKey + "\"";
+  s += ",\"resume\":" + String(resumeAfterBoot ? 1 : 0);
+  s += ",\"autoquery\":" + String(autoQuery ? 1 : 0);
+  s += ",\"txlow\":" + String(prefs.getBool("txlow", false) ? 1 : 0);
   s += "}";
   return s;
 }
@@ -613,8 +815,10 @@ bool keyValid() { return !apiKey.isEmpty() && (web.arg("key") == apiKey || web.h
 
 String clientIp() { return web.client().remoteIP().toString(); }
 const char *methodName() { return web.method() == HTTP_POST ? "POST" : "GET"; }
+void allowCors() { web.sendHeader("Access-Control-Allow-Origin", "*"); }
 
 bool apiAuth() {
+  allowCors();
   if (keyValid()) return true;
   LOG("Abgelehnt 401 (API-Schluessel fehlt/falsch): %s %s von %s", methodName(), web.uri().c_str(), clientIp().c_str());
   web.send(401, "text/plain", "API key required");
@@ -636,7 +840,7 @@ String controlArgs() {
   return a;
 }
 
-// Die Bedienseite enthält den API-Schlüssel und ist deshalb mit dem Gerätepasswort geschützt.
+// Die Bedienseite liefert den API-Schlüssel aus und ist deshalb mit dem Gerätepasswort geschützt.
 // Solange noch kein Gerätepasswort festgelegt ist (Ersteinrichtung), ist sie offen.
 bool webAuth() {
   if (devicePassword.isEmpty() || web.authenticate(WEB_USER, devicePassword.c_str())) return true;
@@ -644,14 +848,43 @@ bool webAuth() {
   return false;
 }
 
-void sendStatus() { web.send(200, "application/json", statusJson()); }
+bool viaSetupAp() { return apActive && web.client().localIP().toString() == WiFi.softAPIP().toString(); }
+
+// Captive Portal: Anfragen über das Einrichtungs-WLAN an fremde Namen landen auf der Einrichtungsseite,
+// damit Handys die Seite nach dem Verbinden automatisch öffnen.
+bool captiveRedirect() {
+  if (!viaSetupAp()) return false;
+  String host = web.hostHeader();
+  for (unsigned i = 0; i < host.length(); i++) {
+    char c = host[i];
+    if (!((c >= '0' && c <= '9') || c == '.' || c == ':')) {
+      web.sendHeader("Location", "http://" + WiFi.softAPIP().toString() + "/", true);
+      web.send(302, "text/plain", "");
+      return true;
+    }
+  }
+  return false;
+}
+
+void sendStatus() {
+  allowCors();
+  web.send(200, "application/json", statusJson());
+}
 
 void handleRoot() {
+  if (captiveRedirect() || !webAuth()) return;
+  web.send_P(200, "text/html; charset=utf-8", UI_PAGE);
+}
+
+void handleSession() {
   if (!webAuth()) return;
-  String html = UI_PAGE;
-  html.replace("{{KEY}}", apiKey);
-  html.replace("{{VERSION}}", FW_VERSION);
-  web.send(200, "text/html; charset=utf-8", html);
+  web.send(200, "application/json",
+           "{\"key\":\"" + apiKey + "\",\"version\":\"" FW_VERSION "\",\"via_ap\":" + String(viaSetupAp() ? "true" : "false") + "}");
+}
+
+void handleNotFound() {
+  if (captiveRedirect()) return;
+  web.send(404, "text/plain", "Nicht gefunden");
 }
 
 void handleControl() {
@@ -767,18 +1000,23 @@ void handleFilterReset() {
   sendStatus();
 }
 
-void handleWifi() {
-  if (!apiAuth()) return;
-  String s = web.arg("ssid"), p = web.arg("password");
-  if (s.isEmpty() || s.length() > 32 || p.length() > 63 || (p.length() > 0 && p.length() < 8)) {
-    web.send(400, "text/plain", "WLAN-Name 1–32 Zeichen, Passwort leer oder 8–63 Zeichen");
-    return;
-  }
+void connectWifi(const String &s, const String &p) {
   prefs.putString("ssid", s);
   prefs.putString("pass", p);
   wifiSsid = s;
-  LOG_IMPORTANT("WLAN gespeichert: \"%s\" (von %s)", s.c_str(), clientIp().c_str());
+  lastStaRetry = millis();
   WiFi.begin(s.c_str(), p.c_str());
+}
+
+void handleWifi() {
+  if (!apiAuth()) return;
+  String s = web.arg("ssid"), p = web.arg("password");
+  if (!validWifi(s, p)) {
+    web.send(400, "text/plain", "WLAN-Name 1–32 Zeichen, Passwort leer oder 8–63 Zeichen");
+    return;
+  }
+  LOG_IMPORTANT("WLAN gespeichert: \"%s\" (von %s)", s.c_str(), clientIp().c_str());
+  connectWifi(s, p);
   web.send(200, "text/plain", "WLAN gespeichert; Verbindung wird aufgebaut");
 }
 
@@ -808,6 +1046,12 @@ void handleApiKey() {
   web.send(200, "text/plain", "API-Schlüssel gespeichert");
 }
 
+void announceMdns() {
+  if (!mdnsStarted) return;
+  MDNS.addServiceTxt("ambientika", "tcp", "name", displayName.c_str());
+  MDNS.addServiceTxt("ambientika", "tcp", "group", groupName(syncGroup));
+}
+
 void handleSettingsGet() {
   if (!apiAuth()) return;
   web.send(200, "application/json", settingsJson());
@@ -815,13 +1059,25 @@ void handleSettingsGet() {
 
 void handleSettingsPost() {
   if (!apiAuth()) return;
-  String r = web.arg("resume"), q = web.arg("autoquery");
-  if ((r.length() && r != "0" && r != "1") || (q.length() && q != "0" && q != "1")) {
-    web.send(400, "text/plain", "resume/autoquery: 0|1");
+  String r = web.arg("resume"), q = web.arg("autoquery"), g = web.arg("group"), name = web.arg("name");
+  if ((r.length() && r != "0" && r != "1") || (q.length() && q != "0" && q != "1") ||
+      (g.length() && g != "0" && g != "1" && g != "2") || (name.length() && !validDisplayName(name))) {
+    web.send(400, "text/plain", "resume/autoquery: 0|1, group: 0|1|2, name: 1–40 Zeichen ohne \" < > & \\");
     return;
   }
   if (r.length()) { resumeAfterBoot = r == "1"; prefs.putBool("resume", resumeAfterBoot); }
   if (q.length()) { autoQuery = q == "1"; prefs.putBool("autoq", autoQuery); }
+  if (g.length() && uint8_t(g[0] - '0') != syncGroup) {
+    syncGroup = g[0] - '0';
+    prefs.putUChar("group", syncGroup);
+    LOG_IMPORTANT("Gegenlauf-Gruppe: %s", groupName(syncGroup));
+  }
+  if (name.length() && name != displayName) {
+    displayName = name;
+    prefs.putString("name", name);
+    LOG("Anzeigename: %s", name.c_str());
+  }
+  announceMdns();
   LOG("Einstellungen: Wiederanlauf %s, automatische Abfrage %s", resumeAfterBoot ? "an" : "aus", autoQuery ? "an" : "aus");
   web.send(200, "application/json", settingsJson());
 }
@@ -839,11 +1095,11 @@ void handleNetwork() {
     return;
   }
   if (ipmode == "static") {
-    IPAddress ip, mask, gw, dns;
+    IPAddress ip, mask, gw, dnsIp;
     String d = web.arg("dns");
     if (d.isEmpty()) d = web.arg("gw");
     if (!ip.fromString(web.arg("ip")) || !mask.fromString(web.arg("mask")) || !gw.fromString(web.arg("gw")) ||
-        !dns.fromString(d)) {
+        !dnsIp.fromString(d)) {
       web.send(400, "text/plain", "Ungültige IP-Adresse, Subnetzmaske, Gateway oder DNS");
       return;
     }
@@ -861,6 +1117,36 @@ void handleNetwork() {
   scheduleRestart("Netzwerkeinstellungen geaendert");
 }
 
+void handleConfigExport() {
+  if (!apiAuth()) return;
+  LOG("Vorlage fuer weitere Luefter exportiert (von %s)", clientIp().c_str());
+  web.send(200, "application/json", configExportJson(web.arg("withkey") == "1"));
+}
+
+// Übernimmt eine Vorlage eines anderen Lüfters (die Seite liest die JSON-Datei und sendet die Felder).
+void handleConfigImport() {
+  if (!apiAuth()) return;
+  String s = web.arg("ssid"), p = web.arg("pass"), pw = web.arg("devpw"), k = web.arg("newkey");  // "key" = Anmeldung
+  if ((s.length() && !validWifi(s, p)) || (pw.length() && !validSecret(pw, 8, 63, false)) ||
+      (k.length() && !validSecret(k, 16, 64, true))) {
+    web.send(400, "text/plain", "Vorlage ungültig");
+    return;
+  }
+  if (pw.length()) { devicePassword = pw; prefs.putString("devpw", pw); }
+  if (k.length()) { apiKey = k; prefs.putString("key", k); }
+  for (const char *opt : {"resume", "autoquery", "txlow"}) {
+    String v = web.arg(opt);
+    if (v != "0" && v != "1") continue;
+    if (String(opt) == "resume") { resumeAfterBoot = v == "1"; prefs.putBool("resume", resumeAfterBoot); }
+    else if (String(opt) == "autoquery") { autoQuery = v == "1"; prefs.putBool("autoq", autoQuery); }
+    else prefs.putBool("txlow", v == "1");
+  }
+  LOG_IMPORTANT("Vorlage uebernommen (WLAN %s, Passwort %s, Schluessel %s)", s.length() ? s.c_str() : "-",
+                pw.length() ? "ja" : "nein", k.length() ? "ja" : "nein");
+  if (s.length()) connectWifi(s, p);
+  web.send(200, "text/plain", "Vorlage übernommen");
+}
+
 void handleRestart() {
   if (!apiAuth()) return;
   web.send(200, "text/plain", "Neustart …");
@@ -869,6 +1155,7 @@ void handleRestart() {
 
 // Firmware-Update über den Browser: nur die OTA-Datei (Anwendung), nicht das Komplettimage.
 void handleUpdateUpload() {
+  esp_task_wdt_reset();  // ein Upload blockiert die Hauptschleife einige Sekunden
   HTTPUpload &up = web.upload();
   if (up.status == UPLOAD_FILE_START) {
     updateAccepted = false;
@@ -928,9 +1215,61 @@ void handleUpdateDone() {
 }
 
 void handleNetworkStatus() {
+  allowCors();
   String s = "{\"connected\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false");
   s += ",\"ip\":\"" + WiFi.localIP().toString() + "\"";
   s += ",\"hostname\":\"" + hostName + "\"}";
+  web.send(200, "application/json", s);
+}
+
+// ================================================================ Andere Lüfter (mDNS)
+void startPeerScan(uint32_t now) {
+  if (peerSearch || !mdnsStarted) return;
+  lastPeerScan = now;
+  peerSearch = mdns_query_async_new(nullptr, "_ambientika", "_tcp", MDNS_TYPE_PTR, 3000, MAX_PEERS, nullptr);
+}
+
+void peerLoop(uint32_t now) {
+  if (!peerSearch) {
+    if (mdnsStarted && connectedSince && elapsed(now, connectedSince, PEER_FIRST_SCAN_MS) &&
+        (!peerScanDone || elapsed(now, lastPeerScan, PEER_SCAN_MS)))
+      startPeerScan(now);
+    return;
+  }
+  mdns_result_t *results = nullptr;
+  if (!mdns_query_async_get_results(peerSearch, 0, &results)) return;  // Suche läuft noch (nicht blockierend)
+  uint8_t count = 0;
+  for (mdns_result_t *r = results; r && count < MAX_PEERS; r = r->next) {
+    Peer p;
+    p.host = r->hostname ? String(r->hostname) : String("");
+    for (size_t i = 0; i < r->txt_count; i++)
+      if (r->txt[i].key && r->txt[i].value && String(r->txt[i].key) == "name") p.name = r->txt[i].value;
+    for (mdns_ip_addr_t *a = r->addr; a; a = a->next)
+      if (a->addr.type == ESP_IPADDR_TYPE_V4) {
+        p.ip = IPAddress(a->addr.u_addr.ip4.addr).toString();
+        break;
+      }
+    if (p.ip.isEmpty() || p.host == hostName) continue;
+    bool duplicate = false;
+    for (uint8_t i = 0; i < count; i++) duplicate |= peers[i].ip == p.ip;
+    if (!duplicate) peers[count++] = p;
+  }
+  peerCount = count;
+  peerScanDone = true;
+  if (results) mdns_query_results_free(results);
+  mdns_query_async_delete(peerSearch);
+  peerSearch = nullptr;
+}
+
+void handlePeers() {
+  allowCors();
+  uint32_t now = millis();
+  if (web.arg("scan") == "1" && elapsed(now, lastPeerScan, PEER_MANUAL_SCAN_MS)) startPeerScan(now);
+  String s = "{\"scanning\":" + String(peerSearch ? "true" : "false") + ",\"devices\":[";
+  s += "{\"name\":\"" + jsonEscape(displayName) + "\",\"host\":\"" + hostName + "\",\"ip\":\"" + WiFi.localIP().toString() + "\",\"self\":true}";
+  for (uint8_t i = 0; i < peerCount; i++)
+    s += ",{\"name\":\"" + jsonEscape(peers[i].name) + "\",\"host\":\"" + jsonEscape(peers[i].host) + "\",\"ip\":\"" + peers[i].ip + "\",\"self\":false}";
+  s += "]}";
   web.send(200, "application/json", s);
 }
 
@@ -938,9 +1277,14 @@ void setupRoutes() {
   const char *headers[] = {"X-API-Key"};
   web.collectHeaders(headers, 1);
   web.on("/", HTTP_GET, handleRoot);
+  web.on("/api/session", HTTP_GET, handleSession);
   web.on("/network", HTTP_GET, handleNetworkStatus);
   web.on("/api/status", HTTP_GET, sendStatus);
-  web.on("/api/loxone", HTTP_GET, [] { web.send(200, "text/plain", loxoneText()); });
+  web.on("/api/loxone", HTTP_GET, [] {
+    allowCors();
+    web.send(200, "text/plain", loxoneText());
+  });
+  web.on("/api/peers", HTTP_GET, handlePeers);
   web.on("/api/control", HTTP_GET, handleControl);
   web.on("/api/control", HTTP_POST, handleControl);
   web.on("/api/filterreset", HTTP_GET, handleFilterReset);
@@ -954,7 +1298,17 @@ void setupRoutes() {
   web.on("/api/settings", HTTP_GET, handleSettingsGet);
   web.on("/api/settings", HTTP_POST, handleSettingsPost);
   web.on("/api/network", HTTP_POST, handleNetwork);
+  web.on("/api/config/export", HTTP_GET, handleConfigExport);
+  web.on("/api/config/import", HTTP_POST, handleConfigImport);
   web.on("/api/restart", HTTP_POST, handleRestart);
+  web.on("/api/loxone/output.xml", HTTP_GET, [] {
+    if (!apiAuth()) return;
+    web.send(200, "application/xml; charset=utf-8", loxoneOutputXml());
+  });
+  web.on("/api/loxone/input.xml", HTTP_GET, [] {
+    if (!apiAuth()) return;
+    web.send(200, "application/xml; charset=utf-8", loxoneInputXml());
+  });
   web.on("/update", HTTP_POST, handleUpdateDone, handleUpdateUpload);
   web.on("/api/log", HTTP_GET, [] {
     if (!apiAuth()) return;
@@ -969,19 +1323,26 @@ void setupRoutes() {
     LOG("Protokoll geloescht (von %s)", clientIp().c_str());
     web.send(200, "text/plain", "Protokoll gelöscht");
   });
+  web.onNotFound(handleNotFound);
 }
 
 // ================================================================ WLAN
 void startAP() {
   const char *pw = devicePassword.isEmpty() ? SETUP_PASSWORD : devicePassword.c_str();
   WiFi.softAP(apName().c_str(), pw);
+  dns.start(53, "*", WiFi.softAPIP());
   apActive = true;
   apStarted = millis();
+  // Solange das Einrichtungs-WLAN offen ist, sucht der ESP das Heim-WLAN nur minütlich: dauerndes Suchen
+  // wechselt den Funkkanal und würde verbundene Handys immer wieder trennen.
+  WiFi.setAutoReconnect(false);
   LOG("Einrichtungs-WLAN %s geoeffnet (%s)", apName().c_str(), devicePassword.isEmpty() ? "Standardpasswort" : "Geraetepasswort");
 }
 
 void stopAP() {
+  dns.stop();
   WiFi.softAPdisconnect(true);
+  WiFi.setAutoReconnect(true);
   apActive = false;
   LOG("Einrichtungs-WLAN geschlossen");
 }
@@ -995,20 +1356,22 @@ void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
 }
 
 void setupWifi() {
+  WiFi.persistent(false);  // Zugangsdaten verwaltet die Firmware selbst (kein zusätzlicher Flash-Schreibzugriff)
   WiFi.onEvent(onWifiEvent);
   WiFi.setHostname(hostName.c_str());
   WiFi.mode(WIFI_STA);
   bool txLow = prefs.getBool("txlow", false);
   if (txLow) WiFi.setTxPower(WIFI_POWER_8_5dBm);  // häufige Abhilfe bei WLAN-Problemen des Super Mini
   if (prefs.getString("ipmode", "dhcp") == "static") {
-    IPAddress ip, mask, gw, dns;
+    IPAddress ip, mask, gw, dnsIp;
     if (ip.fromString(prefs.getString("ip", "")) && mask.fromString(prefs.getString("mask", "")) &&
-        gw.fromString(prefs.getString("gw", "")) && dns.fromString(prefs.getString("dns", "")))
-      WiFi.config(ip, gw, mask, dns);
+        gw.fromString(prefs.getString("gw", "")) && dnsIp.fromString(prefs.getString("dns", "")))
+      WiFi.config(ip, gw, mask, dnsIp);
   }
   wifiSsid = prefs.getString("ssid", "");
   if (wifiSsid.length()) {
     WiFi.begin(wifiSsid.c_str(), prefs.getString("pass", "").c_str());
+    lastStaRetry = millis();
     if (txLow) WiFi.setTxPower(WIFI_POWER_8_5dBm);
   } else {
     startAP();  // Ersteinrichtung
@@ -1017,6 +1380,7 @@ void setupWifi() {
 }
 
 void wifiLoop(uint32_t now) {
+  if (apActive) dns.processNextRequest();
   if (wifiDiscPending) {
     wifiDiscPending = false;
     uint8_t r = wifiDiscReason;
@@ -1030,8 +1394,8 @@ void wifiLoop(uint32_t now) {
     LOG("WLAN verbunden: \"%s\", IP %s, Empfang %d dBm, Kanal %d", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), (int)WiFi.RSSI(), (int)WiFi.channel());
     lastLoggedDiscReason = 0;
     if (!ntpStarted) {
-      ntpGateway = WiFi.gatewayIP().toString();
-      configTzTime("CET-1CEST,M3.5.0,M10.5.0/3", "pool.ntp.org", ntpGateway.c_str(), "time.google.com");
+      ntpGateway = WiFi.gatewayIP().toString();  // viele Router (z. B. FRITZ!Box) sind selbst Zeitserver
+      configTzTime(TZ_EUROPE_BERLIN, "pool.ntp.org", ntpGateway.c_str(), "time.google.com");
       ntpStarted = true;
     }
   } else if (!connected && wasConnected) {
@@ -1043,7 +1407,9 @@ void wifiLoop(uint32_t now) {
     if (!connectedSince) connectedSince = now ? now : 1;
     if (!mdnsStarted && MDNS.begin(hostName.c_str())) {
       MDNS.addService("http", "tcp", 80);
+      MDNS.addService("ambientika", "tcp", 80);
       mdnsStarted = true;
+      announceMdns();
     }
     // Einrichtungs-WLAN kurz offen lassen, damit die Seite die neue Adresse anzeigen kann.
     if (apActive && elapsed(now, connectedSince, AP_LINGER_MS)) stopAP();
@@ -1054,6 +1420,10 @@ void wifiLoop(uint32_t now) {
     if (needed && !apActive && !apWindowExpired) {
       if (wifiSsid.length()) LOG_IMPORTANT("Heim-WLAN seit %lu s nicht erreichbar", (unsigned long)((now - disconnectedSince) / 1000));
       startAP();
+    }
+    if (apActive && wifiSsid.length() && elapsed(now, lastStaRetry, STA_RETRY_MS)) {
+      lastStaRetry = now;
+      WiFi.begin(wifiSsid.c_str(), prefs.getString("pass", "").c_str());
     }
   }
   // Mit dem öffentlich bekannten Standardpasswort höchstens 10 Minuten je Neustart.
@@ -1085,7 +1455,7 @@ void logLoop(uint32_t now) {
   if (!timeSynced && epochNow()) {
     timeSynced = true;
     bootEpoch = epochNow() - now / 1000;
-    LOG("Uhrzeit per NTP synchronisiert");
+    LOG("Uhrzeit per NTP synchronisiert%s", syncGroup ? ", Gegenlauf-Takt aktiv" : "");
   }
   if (elapsed(now, lastHeartbeat, HEARTBEAT_MS)) {
     lastHeartbeat = now;
@@ -1100,26 +1470,19 @@ void logLoop(uint32_t now) {
   }
 }
 
-String modeDescription(Mode m, uint8_t l, uint8_t h, bool n) {
-  static const char *const LABELS[] = {"Aus", "WRG", "Automatik", "Zuluft", "Abluft", "Pause", "Boost"};
-  String s = LABELS[m];
-  if (m == WRG || m == SUPPLY || m == EXTRACT) s += " Stufe " + String((int)l);
-  if (m == AUTO) s += String(" Feuchte ") + String((int)h) + (n ? " Nacht" : " Tag");
-  return s;
-}
-
 String logText() {
   String s;
   s.reserve(2500 + (LOG_SIZE + PERSIST_SIZE) * 120);
   s += "=== Ambientika-Protokoll ===\n";
   s += "Firmware: " FW_VERSION "\n";
-  s += "Geraet: " + hostName + " / " + apName() + "\n";
+  s += "Geraet: " + displayName + " / " + hostName + " / " + apName() + "\n";
   s += "Zeit: " + (epochNow() ? formatEpoch(epochNow()) : String("nicht synchronisiert")) + "\n";
   s += "Start #" + String((unsigned)bootNo) + ", Laufzeit " + formatDuration(millis() / 1000) + ", Grund letzter Start: " + resetReasonText(resetReason) + "\n";
   s += "WLAN: " + String(WiFi.status() == WL_CONNECTED ? "verbunden" : "getrennt") + ", IP " + WiFi.localIP().toString() + ", " + String((int)WiFi.RSSI()) + " dBm, Einrichtungs-WLAN " + (apActive ? "offen" : "zu") + "\n";
-  s += "Netzwerk: " + prefs.getString("ipmode", "dhcp") + ", Sendeleistung " + (prefs.getBool("txlow", false) ? "reduziert" : "normal") + "\n";
+  s += "Netzwerk: " + prefs.getString("ipmode", "dhcp") + ", Sendeleistung " + (prefs.getBool("txlow", false) ? "reduziert" : "normal") + ", andere Luefter gefunden: " + String((unsigned)peerCount) + "\n";
   s += "Speicher frei: " + String((unsigned long)ESP.getFreeHeap()) + " (min " + String((unsigned long)ESP.getMinFreeHeap()) + ")\n";
-  s += "Bus: " + String(enabled ? "freigegeben" : "gesperrt") + ", Betriebsart " + modeDescription(mode, level, humidity, night) + ", Phase " + phaseName() + "\n";
+  s += "Bus: " + String(enabled ? "freigegeben" : "gesperrt") + ", Betriebsart " + modeDescription(mode, level, humidity, night) + ", Phase " + phaseName() +
+       ", Gegenlauf-Gruppe " + groupName(syncGroup) + (groupClockActive() ? " (Takt aktiv)" : "") + "\n";
   s += "Optionen: Geraetepasswort " + String(devicePassword.isEmpty() ? "NICHT gesetzt" : "gesetzt") + ", Wiederanlauf " + (resumeAfterBoot ? "an" : "aus") + ", Auto-Abfrage " + (autoQuery ? "an" : "aus") + "\n";
   s += "Luefter: comm_ok " + String(commOk) + ", letzte Antwort " + (hasReply ? String("vor ") + formatDuration((millis() - lastReply) / 1000) : String("nie")) +
        ", Daemmerung " + String(light) + ", Filter " + String(filter1) + "/" + String(filter2) + ", Feuchte " + String(moist) + "\n";
@@ -1132,7 +1495,7 @@ String logText() {
 
 void printInfo() {
   Serial.println("Ambientika-Steuerung " FW_VERSION);
-  Serial.println("Gerätename: " + hostName + " (http://" + hostName + ".local)");
+  Serial.println("Name: " + displayName + ", Geraetename: " + hostName + " (http://" + hostName + ".local)");
   Serial.println("Einrichtungs-WLAN: " + apName());
   if (devicePassword.isEmpty()) Serial.println("WLAN-Passwort: " + String(SETUP_PASSWORD) + " (Standard)");
   else Serial.println("WLAN-/Web-Passwort: Gerätepasswort (admin)");
@@ -1151,9 +1514,13 @@ void loadSettings() {
   devicePassword = prefs.getString("devpw", "");
   hostName = prefs.getString("host", "");
   if (!validHostName(hostName)) hostName = "ambientika-" + chipSuffix();
+  displayName = prefs.getString("name", "");
+  if (!validDisplayName(displayName)) displayName = "Lüfter " + chipSuffix();
   enabled = prefs.getBool("enabled", false);
   resumeAfterBoot = prefs.getBool("resume", true);
   autoQuery = prefs.getBool("autoq", true);
+  syncGroup = prefs.getUChar("group", GROUP_NONE);
+  if (syncGroup > GROUP_B) syncGroup = GROUP_NONE;
 
   uint8_t m = prefs.getUChar("mode", OFF), l = prefs.getUChar("level", 1), h = prefs.getUChar("hum", 2);
   savedState = {m < MODE_COUNT && m != BOOST ? Mode(m) : OFF, l <= 3 ? l : uint8_t(1), (h == 2 || h == 3) ? h : uint8_t(2),
@@ -1188,13 +1555,17 @@ void setup() {
     mode = OFF;
   }
   printInfo();
+  esp_task_wdt_init(WDT_TIMEOUT_S, true);  // setzt Zeitlimit und Panic-Neustart des Task-Watchdogs
+  esp_task_wdt_add(nullptr);               // Hauptschleife überwachen
 }
 
 void loop() {
+  esp_task_wdt_reset();
   web.handleClient();
   uint32_t now = millis();
   if (Serial.available() && Serial.read() == 'i') printInfo();
   wifiLoop(now);
+  peerLoop(now);
   buttonLoop(now);
   busLoop(now);
   logLoop(now);

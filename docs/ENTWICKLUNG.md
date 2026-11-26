@@ -25,7 +25,9 @@ byte-identisch zur geflashten v1 sind.
 | Lüfterlogik | `setMode`, `busLoop` (500-ms-Takt, Motorpausen, WRG-Zyklus, Boost, Filter-Reset, Statusabfrage mit 3 s Sendesperre), Telegramm-Encoder |
 | Persistenz | `saveState` schreibt Betriebsart/Einstellungen nur bei Änderung in den NVS |
 | HTTP | Handler für API, Bedienseite (`ui.h`), OTA-Update |
-| WLAN/System | Einrichtungs-WLAN, mDNS, statische IP, BOOT-Taster-Reset |
+| WLAN/System | Einrichtungs-WLAN mit Captive Portal (DNSServer), mDNS-Ankündigung `_ambientika._tcp` und nicht blockierende Suche nach anderen Lüftern, statische IP, BOOT-Taster-Reset, Task-Watchdog (30 s) |
+| Gegenlauf | `scheduleSlot()`: 140-s-Periode aus der NTP-Uhrzeit (`clockMs()`), Gruppe B um 70 s versetzt; `busLoop` erzwingt weiterhin ≥ 10 s Pause vor jedem Richtungswechsel |
+| Oberfläche | `src/ui.h`: statisches HTML/CSS/JS (ca. 50 KB), Design nach Lattice (UXKIN), Schlüssel über `/api/session` |
 | Protokoll | `logMsg`/`LOG`/`LOG_IMPORTANT`: RAM-Ring (200 × 102 Byte im `.noinit`-Bereich, übersteht Software-Neustarts, mit Magic/Prüfwert) und 16 wichtige Einträge als NVS-Blob; Ausgabe über `/api/log` |
 
 ## Tests
@@ -38,9 +40,14 @@ automatische Statusabfrage mit Sendesperre, `comm_ok`, Filter-Reset, Telegramm-E
 alle Hand-/Automatiktelegramme, Wiederherstellung nach Neustart, Passwortschutz,
 API-Schlüsselwechsel, Einrichtungs-WLAN-Regeln, Protokoll (Inhalt, keine Geheimnisse,
 Ringpuffer, Kürzung, Verhalten bei Absturz/Stromausfall/beschädigtem Speicher, WLAN-Gründe,
-unerwartete Busdaten), statische IP, OTA (inkl. Ablehnung des
+unerwartete Busdaten), Gegenlauf-Takt (A/B gegenläufig, nie unter 10 s Pause, Rückfall ohne
+Uhrzeit), Captive Portal, Suche nach anderen Lüftern, Loxone-Vorlagen, Vorlagen-Export/-Import,
+Anzeigename, CORS, Watchdog, statische IP, OTA (inkl. Ablehnung des
 Komplettimages und Sperre bei laufendem Lüfter), BOOT-Reset, `millis()`-Überlauf.
-Zusätzlich wurde die Weboberfläche mit Playwright gegen einen Mock-Server geprüft.
+Die Testuhr wird über `AMBI_CLOCK_MS()` eingespeist (siehe Anfang von `test.cpp`).
+Zusätzlich wurde die Weboberfläche mit Playwright gegen einen Mock-Server mit sieben
+simulierten Lüftern geprüft (alle Tabs, Handy- und Desktopbreite, ohne JavaScript-Fehler);
+die Screenshots in `docs/img` stammen daraus.
 
 Physische Tests mit ESP, WLAN und Lüfter stehen für v2 noch aus (siehe Testliste in
-[LOXONE.md](LOXONE.md#7-testen-und-fehlersuche)).
+[LOXONE.md](LOXONE.md#9-testen-und-fehlersuche)).

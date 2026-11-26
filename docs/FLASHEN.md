@@ -7,7 +7,7 @@ Einstellungen (WLAN, API-Schlüssel, Freigabe) erhalten bleiben sollen:
 |---|---|---|---|
 | `ambientika-c3-v2-komplett-0x0.bin` | USB | **0x0** | werden **gelöscht** (neuer API-Schlüssel) – für neue ESPs |
 | `ambientika-c3-v2-update-0xE000.bin` | USB | **0xE000** | bleiben erhalten – für ESPs, auf denen schon v1/v2 läuft |
-| `ambientika-c3-v2-ota.bin` | ESP-Webseite, Abschnitt 6 | – | bleiben erhalten – nur wenn bereits v2 läuft |
+| `ambientika-c3-v2-ota.bin` | ESP-Webseite, Tab System | – | bleiben erhalten – nur wenn bereits v2 läuft |
 
 Dateien: [v2](../dist/v2/) · [v1](../dist/v1/) · Wechsel zwischen den Versionen: [VERSIONEN.md](VERSIONEN.md)
 
@@ -46,9 +46,9 @@ mit der passenden Adresse, DIO, 40 MHz, 4 MB.
 
 ## Über die Weboberfläche (ab v2)
 
-1. ESP-Seite öffnen, unter **4** „Aus“ wählen und eine Sekunde warten
+1. ESP-Seite öffnen, im Tab **Lüfter** „Aus“ wählen und eine Sekunde warten
    (bei laufendem Lüfter lehnt der ESP das Update ab).
-2. Abschnitt **6 · Firmware-Update**: Datei `…-ota.bin` wählen, **Firmware hochladen**.
+2. Tab **System → Firmware-Update**: Datei `…-ota.bin` wählen, **Firmware hochladen**.
 3. Nach ca. 20 s startet der ESP neu. Mit aktivierter Wiederherstellung läuft die
    Lüftung danach in der zuletzt gespeicherten Betriebsart.
 
@@ -57,4 +57,4 @@ bisherige Firmware weiter.
 
 ## Nach dem ersten Flashen (neuer ESP)
 
-Weiter mit der [Einrichtung im README](../README.md#3-einrichten).
+Weiter mit der [Schritt-für-Schritt-Anleitung](ANLEITUNG.md#5-ersten-lüfter-einrichten).

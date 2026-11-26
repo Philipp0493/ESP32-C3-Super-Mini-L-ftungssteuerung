@@ -1,6 +1,10 @@
 // Native Tests: führen die echte Firmware (src/main.cpp) mit simulierten UART/Web/WLAN/NVS aus.
 #include <cassert>
 #include <iostream>
+#include "Arduino.h"
+// Testuhr: 0 = noch keine NTP-Zeit, sonst Epoch-ms = Basis + simulierte millis().
+uint64_t fakeClockBase = 1764000000000ULL;
+#define AMBI_CLOCK_MS() (fakeClockBase ? fakeClockBase + fakeNow : 0)
 #include "../../src/main.cpp"
 
 using Args = std::map<std::string, String>;
@@ -172,13 +176,16 @@ int main() {
   call("/enable", {{"enabled", "1"}, {"key", apiKey}}); tick(fakeNow + 500); expect(PAYLOAD_OFF);
 
   // ---------- Bedienseite und Gerätepasswort
-  web.routes["/"](); assert(web.code == 200 && web.body.find(apiKey) != std::string::npos);  // ohne Passwort offen
-  assert(web.body.find("{{") == std::string::npos);
+  web.routes["/"](); assert(web.code == 200 && web.body.find("<html") != std::string::npos);  // ohne Passwort offen
+  assert(web.body.find(apiKey) == std::string::npos);  // Seite selbst enthält keinen Schlüssel
+  web.routes["/api/session"](); assert(web.code == 200 && web.body.find(apiKey) != std::string::npos);
   call("/api/password", {{"password", "kurz"}, {"key", apiKey}}); assert(web.code == 400);
   call("/api/password", {{"password", "mit leer"}, {"key", apiKey}}); assert(web.code == 400);
   call("/api/password", {{"password", "Geheim-123"}, {"key", apiKey}}); assert(web.code == 200 && prefs.getString("devpw", "") == "Geheim-123");
   web.authOk = false; web.body = ""; web.routes["/"](); assert(web.code == 401 && web.authRequests == 1 && web.body.find(apiKey) == std::string::npos);
+  web.routes["/api/session"](); assert(web.code == 401 && web.body.find(apiKey) == std::string::npos);
   web.authOk = true; web.routes["/"](); assert(web.code == 200);
+  web.routes["/api/session"](); assert(web.code == 200 && web.body.find(apiKey) != std::string::npos);
   call("/api/settings", {{"key", "wrong"}}); assert(web.code == 401);
 
   // ---------- API-Schlüssel ändern (z. B. alten Schlüssel nach Neuflashen wiederherstellen)
@@ -294,8 +301,120 @@ int main() {
   apiKey = prefs.getString("key", "");
   call("/api/log/clear", {{"key", apiKey}}); assert(web.code == 200 && persistLog.count == 0 && ramLog.count == 1);
 
+  // ---------- Mehrere Lüfter: Gegenlauf-Takt über die Uhrzeit (Gruppe A/B)
+  apiKey = prefs.getString("key", ""); autoQuery = false; WiFi.connection = 1;
+  call("/enable", {{"enabled", "1"}, {"key", apiKey}});
+  call("/api/settings", {{"group", "3"}, {"key", apiKey}}); assert(web.code == 400);
+  call("/api/settings", {{"group", "1"}, {"key", apiKey}}); assert(web.code == 200 && syncGroup == GROUP_A && prefs.getUChar("group", 0) == 1);
+  // Zeitplan: A und B sind zu jedem Zeitpunkt gegenläufig (Zuluft <-> Abluft, Pausen gleichzeitig)
+  for (uint32_t t = 0; t < SYNC_PERIOD_MS * 2; t += 250) {
+    fakeNow = t; uint32_t ra, rb;
+    syncGroup = GROUP_A; int a = scheduleSlot(ra);
+    syncGroup = GROUP_B; int bslot = scheduleSlot(rb);
+    assert(a >= 0 && bslot >= 0 && (a == 1 ? bslot == 1 : bslot == 2 - a));
+  }
+  syncGroup = GROUP_NONE; { uint32_t r; assert(scheduleSlot(r) == -1); }
+  for (uint8_t g : {GROUP_A, GROUP_B}) {
+    syncGroup = g; request("wrg"); bus.out.clear();
+    uint32_t start = fakeNow + 1, pauseBegin = 0; bool prevWaiting = true; int changes = 0; bool prevSupply = supply;
+    for (uint32_t t = start; t < start + 10 * 60 * 1000; t += 100) {
+      tick(t); bus.out.clear();
+      if (waiting && pauseSent && !prevWaiting) pauseBegin = phaseStart;
+      if (waiting && pauseSent && prevWaiting && pauseBegin == 0) pauseBegin = phaseStart;
+      if (prevWaiting && !waiting) { assert(fakeNow - pauseBegin >= MOTOR_PAUSE_MS); pauseBegin = 0; }  // nie kürzer als 10 s Pause
+      if (!waiting) {  // läuft der Motor, dann immer in Richtung des gemeinsamen Zeitplans
+        uint32_t r; int slot = scheduleSlot(r);
+        assert(slot != 1 && (slot == 0) == supply);
+        if (supply != prevSupply) changes++;
+        prevSupply = supply;
+      }
+      prevWaiting = waiting;
+    }
+    if (!(changes >= 8 && changes <= 10)) { std::cerr << "changes=" << changes << "\n"; assert(false); }  // 10 min / 70 s je Richtung (+ Einstieg in den Takt)
+    assert(statusJson().find("\"group_clock\":true") != std::string::npos);
+  }
+  // Ohne Uhrzeit: eigener Takt wie bisher
+  { uint64_t saved = fakeClockBase; fakeClockBase = 0; request("off"); request("wrg"); finishPause(); auto ps = phaseStart; assert(!waiting);
+    tick(ps + CYCLE_MS); assert(waiting); fakeClockBase = saved; }
+  call("/api/settings", {{"group", "0"}, {"key", apiKey}}); request("off"); tick(fakeNow + 500); bus.out.clear();
+
+  // ---------- Anzeigename, CORS, mDNS-Ankündigung
+  call("/api/settings", {{"name", "Bad <oben>"}, {"key", apiKey}}); assert(web.code == 400);
+  mdnsStarted = true;
+  call("/api/settings", {{"name", "Schlafzimmer Süd"}, {"key", apiKey}}); assert(web.code == 200 && displayName == "Schlafzimmer Süd");
+  assert(prefs.getString("name", "") == "Schlafzimmer Süd" && MDNS.txt["name"] == "Schlafzimmer Süd");
+  web.headers.clear(); web.routes["/api/status"](); assert(web.headers["Access-Control-Allow-Origin"] == "*");
+  assert(web.body.find("\"name\":\"Schlafzimmer Süd\"") != std::string::npos && web.body.find("\"phase_remaining_s\":") != std::string::npos);
+
+  // ---------- Loxone-Vorlagen
+  web.args = {{"key", "falsch"}}; web.routes["/api/loxone/output.xml"](); assert(web.code == 401);
+  web.args = {{"key", apiKey}}; web.routes["/api/loxone/output.xml"](); String vo = web.body;
+  assert(vo.find("<VirtualOut Title=\"Schlafzimmer Süd\"") != std::string::npos);
+  assert(vo.find("CmdOn=\"/api/control?key=" + apiKey + "&amp;mode=&lt;v&gt;\"") != std::string::npos);
+  assert(vo.find("Analog=\"true\"") != std::string::npos && vo.find("<v>") == std::string::npos);
+  assert(vo.find("CmdOff=\"/api/control?key=" + apiKey + "&amp;night=0\"") != std::string::npos);
+  web.routes["/api/loxone/input.xml"](); String vi = web.body;
+  assert(vi.find("Address=\"http://192.0.2.1/api/loxone\"") != std::string::npos && vi.find("Check=\"filter=\\v\"") != std::string::npos);
+  assert(vi.find("PollingTime=\"30\"") != std::string::npos);
+  if (const char *dir = getenv("AMBI_DUMP")) {  // zur Prüfung mit einem XML-Parser
+    FILE *f = fopen((std::string(dir) + "/vo.xml").c_str(), "w"); fputs(vo.c_str(), f); fclose(f);
+    f = fopen((std::string(dir) + "/vi.xml").c_str(), "w"); fputs(vi.c_str(), f); fclose(f);
+  }
+
+  // ---------- Vorlage für weitere Lüfter (Export/Import)
+  prefs.putString("ssid", "home"); prefs.putString("pass", "examplepass"); wifiSsid = "home";
+  call("/api/config/export", {{"key", apiKey}}); String exp = web.body;
+  assert(exp.find("\"ssid\":\"home\"") != std::string::npos && exp.find("\"pass\":\"examplepass\"") != std::string::npos);
+  assert(exp.find("\"key\"") == std::string::npos);
+  call("/api/config/export", {{"key", apiKey}, {"withkey", "1"}}); assert(web.body.find("\"key\":\"" + apiKey + "\"") != std::string::npos);
+  call("/api/config/import", {{"key", apiKey}, {"ssid", "home"}, {"pass", "kurz"}}); assert(web.code == 400);
+  int begins = WiFi.begins;
+  call("/api/config/import", {{"key", apiKey}, {"ssid", "haus"}, {"pass", "langespasswort"}, {"devpw", "Gemeinsam-1"},
+                              {"resume", "0"}, {"autoquery", "1"}, {"txlow", "1"}});
+  assert(web.code == 200 && WiFi.begins == begins + 1 && WiFi.ssid == "haus" && devicePassword == "Gemeinsam-1" && !resumeAfterBoot && prefs.getBool("txlow", false));
+  call("/api/config/import", {{"key", apiKey}}); assert(web.code == 200 && devicePassword == "Gemeinsam-1");  // leere Vorlage ändert nichts
+  // Gemeinsamer API-Schlüssel per Vorlage: Parameter "key" ist zugleich Anmeldung, daher neuer Schlüssel als X-Vorlage
+  call("/api/config/import", {{"key", apiKey}, {"newkey", "gemeinsamer_schluessel_01"}});
+  assert(web.code == 200 && apiKey == "gemeinsamer_schluessel_01" && prefs.getString("key", "") == apiKey);
+  call("/api/config/import", {{"key", apiKey}, {"newkey", "kurz"}}); assert(web.code == 400 && apiKey == "gemeinsamer_schluessel_01");
+  call("/api/settings", {{"resume", "1"}, {"key", apiKey}});
+
+  // ---------- Captive Portal im Einrichtungs-WLAN
+  WiFi.connection = 0; startAP(); assert(apActive && dns.starts >= 1 && !WiFi.autoReconnect);
+  fakeClientLocalIp = "192.168.4.1"; web.host = "connectivitycheck.gstatic.com"; web.headers.clear();
+  web.notFound(); assert(web.code == 302 && web.headers["Location"] == "http://192.168.4.1/");
+  web.routes["/"](); assert(web.code == 302);
+  web.host = "192.168.4.1"; web.authOk = true; web.routes["/"](); assert(web.code == 200);
+  web.routes["/api/session"](); assert(web.body.find("\"via_ap\":true") != std::string::npos);
+  fakeClientLocalIp = "192.0.2.1"; web.host = "lueftung-bad.local"; web.notFound(); assert(web.code == 404);  // Heimnetz: keine Umleitung
+  int dnsReq = dns.requests; tick(fakeNow + 1); assert(dns.requests > dnsReq);
+  // Heim-WLAN wird bei offenem Einrichtungs-WLAN nur minütlich neu gesucht
+  begins = WiFi.begins; lastStaRetry = fakeNow;
+  { uint32_t t0 = fakeNow; for (uint32_t t = t0; t < t0 + 3 * STA_RETRY_MS + 1; t += 1000) tick(t); }
+  if (WiFi.begins - begins != 3) { std::cerr << "begins=" << WiFi.begins - begins << " ap=" << apActive << "\n"; assert(false); }
+  WiFi.connection = 1; tick(fakeNow + 1); tick(fakeNow + AP_LINGER_MS); assert(!apActive && WiFi.autoReconnect && dns.stops >= 1);
+
+  // ---------- Andere Lüfter per mDNS finden
+  mdns_txt_item_t txtA{"name", "Bad"}; mdns_ip_addr_t ipA{{{{0x5201A8C0u}}, ESP_IPADDR_TYPE_V4}, nullptr};  // 192.168.1.82
+  char hostA[] = "lueftung-bad", hostSelf[16]; strcpy(hostSelf, hostName.c_str());
+  mdns_ip_addr_t ipSelf{{{{0x5001A8C0u}}, ESP_IPADDR_TYPE_V4}, nullptr};
+  mdns_result_t self{nullptr, hostSelf, nullptr, 0, &ipSelf};
+  mdns_result_t other{&self, hostA, &txtA, 1, &ipA};
+  fakeMdnsResults = &other; fakeMdnsPollsNeeded = 3; peerCount = 0; peerScanDone = false; peerSearch = nullptr;
+  int searches = fakeMdnsSearches; connectedSince = fakeNow;
+  tick(fakeNow + PEER_FIRST_SCAN_MS - 1); assert(fakeMdnsSearches == searches);
+  tick(fakeNow + 1); assert(fakeMdnsSearches == searches + 1 && peerSearch);
+  tick(fakeNow + 1); tick(fakeNow + 1); assert(peerSearch); tick(fakeNow + 1); assert(!peerSearch && peerCount == 1 && peers[0].ip == "192.168.1.82" && peers[0].name == "Bad");
+  web.args.clear(); web.routes["/api/peers"]();
+  assert(web.body.find("\"ip\":\"192.168.1.82\"") != std::string::npos && web.body.find("\"self\":true") != std::string::npos);
+  web.args = {{"scan", "1"}}; lastPeerScan = fakeNow - PEER_MANUAL_SCAN_MS; web.routes["/api/peers"](); assert(fakeMdnsSearches == searches + 2);
+  fakeMdnsResults = nullptr; tick(fakeNow + 1); tick(fakeNow + 1); tick(fakeNow + 1);
+
+  // ---------- Watchdog
+  assert(fakeWdtInit >= 1); int wdt = fakeWdtResets; tick(fakeNow + 1); assert(fakeWdtResets == wdt + 1);
+
   // ---------- millis()-Überlauf
   assert(elapsed(500, 0xfffffff0, 500)); assert(!elapsed(10, 0xfffffff0, 500));
   std::cout << "PASS: v2 firmware – Zyklus, Motorpausen, Boost, Statusabfrage (manuell/automatisch), Filter-Reset, "
-               "Persistenz, Passwortschutz, API-Schlüssel, WLAN/Einrichtungs-WLAN, statische IP, OTA, BOOT-Reset, Protokoll, Überlauf\n";
+               "Persistenz, Passwortschutz, API-Schlüssel, WLAN/Einrichtungs-WLAN, statische IP, OTA, BOOT-Reset, Protokoll, Gegenlauf-Takt, Captive Portal, Lüftersuche, Loxone-Vorlagen, Vorlagen-Import, Watchdog, Überlauf\n";
 }

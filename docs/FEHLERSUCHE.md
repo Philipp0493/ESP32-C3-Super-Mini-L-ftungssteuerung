@@ -6,7 +6,7 @@ und gib es zur Analyse weiter, z. B. in einen Chat mit Claude kopieren.
 
 ## Protokoll holen
 
-**Über die Webseite (am einfachsten):** ESP-Seite öffnen → Abschnitt **7 · Protokoll** →
+**Über die Webseite (am einfachsten):** ESP-Seite öffnen → Tab **System → Protokoll** →
 **Herunterladen** (Textdatei) oder **Kopieren** (Zwischenablage). Mit **Protokoll anzeigen**
 siehst du es direkt auf der Seite.
 
@@ -66,5 +66,19 @@ im WRG-Takt gar nicht.
 
 ## Protokoll löschen
 
-Abschnitt 7 → **Löschen** (oder `POST /api/log/clear?key=…`). Das leert beide Listen. Sinnvoll
+Tab System → **Löschen** (oder `POST /api/log/clear?key=…`). Das leert beide Listen. Sinnvoll
 nach abgeschlossener Fehlersuche, damit neue Ereignisse leichter zu finden sind.
+
+## Häufige Fragen bei mehreren Lüftern
+
+| Beobachtung | Ursache / Abhilfe |
+|---|---|
+| Ein Lüfter fehlt im Tab **Alle** | Er muss eingeschaltet, im selben WLAN und auf Firmware 2.2 oder neuer sein. „Neu suchen“ drücken. Manche Router (Gastnetz, „WLAN-Isolierung“, Mesh mit Multicast-Filter) blockieren mDNS. Dann jeden Lüfter über seine IP öffnen; Loxone ist davon nicht betroffen. |
+| Kachel zeigt „nicht erreichbar“ | Lüfter aus oder IP geändert. Feste Zuordnung im Router prüfen. |
+| „An alle senden“: „anderer Schlüssel“ | Dieser Lüfter hat einen anderen API-Schlüssel. Unter System den gemeinsamen Schlüssel eintragen oder die Vorlage erneut laden. |
+| „Gegenlauf (wartet auf Uhrzeit)“ | Der ESP hat noch keine Uhrzeit. Er braucht Internet oder einen Zeitserver im Router (FRITZ!Box: Heimnetz → Netzwerk → Netzwerkeinstellungen → Zeitsynchronisation). Bis dahin läuft er im eigenen Takt. |
+| Partnerlüfter laufen nicht gegenläufig | Beide in derselben Gruppe? Einer muss A, der andere B sein. Die Änderung greift beim nächsten Richtungswechsel. |
+| Handy öffnet die Einrichtungsseite nicht automatisch | `http://192.168.4.1` im Browser eingeben. Bei „Kein Internet“ verbunden bleiben. |
+| Im automatisch geöffneten Fenster lässt sich die Vorlage nicht auswählen | `http://192.168.4.1` im normalen Browser (Safari/Chrome) öffnen. |
+| Einrichtungs-WLAN „Ambientika-…“ ist nicht zu sehen | Es öffnet sich nur ohne gespeichertes WLAN oder nach 2 Minuten ohne Heim-WLAN. Zum Zurücksetzen den BOOT-Taster 10 s halten. |
+| Passwort des Einrichtungs-WLANs passt nicht | Nach dem Festlegen des Gerätepassworts gilt dieses statt `Lueftung-Start`. |

@@ -4,13 +4,48 @@ Beide Versionen liegen fertig im Repository und nutzen dieselbe Verdrahtung und 
 gespeicherten Grundeinstellungen (WLAN, API-Schlüssel, Busfreigabe). Du kannst jederzeit
 wechseln.
 
-| | v1 (bisher geflasht) | v2 |
+| | v1 (getestet, bisher geflasht) | v2 (Firmware 2.2.0) |
 |---|---|---|
 | Dateien | [dist/v1](../dist/v1/) | [dist/v2](../dist/v2/) |
 | Quellcode | Commit `b0c1332` | aktueller Stand |
 | Loxone-Anleitung | [v1/LOXONE-v1.md](v1/LOXONE-v1.md) | [LOXONE.md](LOXONE.md) |
 
-## Was ist neu in v2?
+## Neu in Firmware 2.2.0 (Mehrlüfter-Version)
+
+**Für 8–10 Lüfter**
+- **Gegenlauf-Gruppen A/B:** Lüfter einer Gruppe wechseln gleichzeitig die Richtung,
+  Gruppe A und B laufen immer gegenläufig. Der Takt wird aus der Uhrzeit (NTP) gebildet,
+  ohne Kabel zwischen den ESPs. Jeder Wechsel läuft weiterhin über ≥ 10 s Motorpause. Ohne
+  Uhrzeit läuft jeder Lüfter im eigenen Takt weiter.
+- **Übersicht „Alle Lüfter“:** Die ESPs finden sich per mDNS (`_ambientika._tcp`). Der
+  Tab zeigt alle Lüfter mit Zustand; „An alle senden“ für WRG, Automatik, Boost und Aus.
+- **Vorlage für weitere Lüfter:** WLAN, Gerätepasswort, Optionen und optional ein
+  gemeinsamer API-Schlüssel werden mit einer Datei übertragen.
+- **Loxone-Vorlagen zum Import:** Virtueller Ausgang und Virtueller HTTP-Eingang als
+  XML-Datei, mit eingetragener Adresse und eingetragenem Schlüssel.
+- **Anzeigename** pro Lüfter (mit Umlauten), getrennt vom Gerätenamen im Netzwerk.
+
+**Einrichtung und Bedienung**
+- **Neues Design** (angelehnt an das Lattice-Designsystem): Tabs Lüfter, Alle,
+  Einrichten, Loxone, System. Betriebsart per Kachel mit einem Tipp, ohne
+  „Übernehmen“-Knopf. Countdown bis zum nächsten Richtungswechsel. Dunkelmodus.
+- **Einrichtungsassistent** mit 7 Schritten und Fortschrittsanzeige.
+- **Captive Portal:** Nach dem Verbinden mit dem Einrichtungs-WLAN öffnet das Handy die
+  Seite automatisch.
+
+**Grundsätzliche Verbesserungen**
+- **Watchdog:** Hängt die Firmware länger als 30 s, startet der ESP neu und läuft in der
+  gespeicherten Betriebsart weiter.
+- **Stabileres Einrichtungs-WLAN:** Solange es offen ist, sucht der ESP das Heim-WLAN nur
+  noch minütlich. Das dauernde Suchen hat verbundene Handys immer wieder getrennt.
+- Die Bedienseite wird statisch ausgeliefert, der Schlüssel kommt erst nach der Anmeldung
+  (`/api/session`). Das spart Arbeitsspeicher.
+- Lesende Schnittstellen erlauben Abrufe von anderen Lüfterseiten (CORS), damit die
+  Übersicht funktioniert.
+- WLAN-Zugangsdaten werden nicht mehr zusätzlich vom WLAN-Treiber in den Flash
+  geschrieben.
+
+## Was ist neu in v2 gegenüber v1?
 
 **Sicherheit**
 - **Gerätepasswort** pro ESP: schützt die Bedienseite (Benutzer `admin`), das
@@ -49,7 +84,7 @@ wechseln.
   ESP32-C3 Super Mini.
 
 **Fehlersuche (Firmware 2.1.0)**
-- **Ereignisprotokoll** auf der ESP-Seite (Abschnitt 7) zum Anzeigen, Herunterladen und
+- **Ereignisprotokoll** auf der ESP-Seite (Tab System) zum Anzeigen, Herunterladen und
   Kopieren: Starts mit Grund (Stromausfall/Absturz/Unterspannung), WLAN mit Trennungsgrund,
   Befehle mit Absender, abgelehnte Befehle, Lüfterantworten mit Rohdaten, Updates.
   Die letzten 200 Einträge überstehen Neustarts, wichtige Ereignisse auch Stromausfälle.
@@ -79,16 +114,16 @@ v1 hat kein Web-Update, daher **einmal per USB**:
 2. ESP per USB anschließen und `dist/v2/ambientika-c3-v2-update-0xE000.bin` an **0xE000**
    flashen ([FLASHEN.md](FLASHEN.md)).
 3. ESP startet mit v2, WLAN, API-Schlüssel und Freigabe sind noch da. Die Seite ist unter
-   der bekannten IP erreichbar und **noch ohne Passwort** – als Erstes unter **1** das
+   der bekannten IP erreichbar und **noch ohne Passwort** – als Erstes im Tab **Einrichten** das
    Gerätepasswort festlegen.
-4. Unter **2** einen Gerätenamen vergeben (optional), unter **4** die Optionen prüfen.
+4. Im Tab **Einrichten** Namen, Gruppe und Vorlage erledigen, unter **System** die Optionen prüfen.
 5. Loxone-Befehle aus v1 funktionieren unverändert weiter. Die neuen Möglichkeiten
    (Radiotasten, Rückmeldung) nach [LOXONE.md](LOXONE.md) ergänzen.
 
 ### v2 → v1 (zurück)
 
 1. Auf der v2-Seite „Aus“ wählen.
-2. Abschnitt **6 · Firmware-Update**: `dist/v1/ambientika-c3-v1-ota.bin` hochladen
+2. Tab **System → Firmware-Update**: `dist/v1/ambientika-c3-v1-ota.bin` hochladen
    (der Hinweis zum Dateinamen kann bestätigt werden). Alternativ per USB
    `ambientika-c3-v1-update-0xE000.bin` an 0xE000.
 3. v1 startet mit WLAN, API-Schlüssel und Freigabe. Zu beachten: v1 kennt kein
@@ -106,6 +141,6 @@ wieder.
 
 Das Komplettimage (`…-komplett-0x0.bin`) überschreibt beim Flashen auch den
 Einstellungsspeicher. Danach gibt es einen **neuen API-Schlüssel** und das WLAN muss neu
-eingerichtet werden. In v2 kannst du unter **5 · Mit Loxone verbinden → API-Schlüssel** den
+eingerichtet werden. In v2 kannst du unter **System → Sicherheit** den
 alten Schlüssel wieder eintragen. Für Wechsel daher immer das Update-Image (0xE000) oder die
 OTA-Datei verwenden.
