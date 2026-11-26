@@ -13,12 +13,13 @@
 #include <esp_system.h>
 #include <esp_attr.h>
 #include <esp_task_wdt.h>
+#include <esp_netif.h>
 #include <sys/time.h>
 #include <time.h>
 #include <stdarg.h>
 #include "ui.h"
 
-#define FW_VERSION "2.2.0"
+#define FW_VERSION "2.2.1"
 
 // ---------------------------------------------------------------- Hardware
 constexpr int RX_PIN = 4, TX_PIN = 5;
@@ -1108,9 +1109,21 @@ void handleNetwork() {
     prefs.putString("gw", web.arg("gw"));
     prefs.putString("dns", d);
   }
+  bool onlyName = ipmode == prefs.getString("ipmode", "dhcp") && ipmode == "dhcp" && (tx == "1") == prefs.getBool("txlow", false);
   prefs.putString("ipmode", ipmode);
   prefs.putString("host", name);
   prefs.putBool("txlow", tx == "1");
+  // Ohne WLAN-Verbindung (z. B. während der Ersteinrichtung) gilt ein neuer Gerätename ohne Neustart:
+  // er wird beim nächsten Verbindungsaufbau an den Router gemeldet.
+  if (onlyName && WiFi.status() != WL_CONNECTED) {
+    hostName = name;
+    WiFi.setHostname(name.c_str());
+    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (sta) esp_netif_set_hostname(sta, name.c_str());
+    LOG("Geraetename: %s (ohne Neustart)", name.c_str());
+    web.send(200, "text/plain", "Gespeichert");
+    return;
+  }
   LOG_IMPORTANT("Netzwerk geaendert: Name %s, %s %s, Sendeleistung %s", name.c_str(), ipmode.c_str(),
                 ipmode == "static" ? web.arg("ip").c_str() : "", tx == "1" ? "reduziert" : "normal");
   web.send(200, "text/plain", "Gespeichert. Neustart …");
@@ -1327,8 +1340,13 @@ void setupRoutes() {
 }
 
 // ================================================================ WLAN
+// Das Gerätepasswort schützt das Einrichtungs-WLAN erst, wenn ein Heim-WLAN eingerichtet ist (Notfall-Zugang
+// bei WLAN-Ausfall). Während der Ersteinrichtung bleibt das bekannte Passwort, damit ein Neustart mitten in
+// der Einrichtung das Handy nicht aussperrt; die Seite selbst ist dann bereits per Gerätepasswort geschützt.
+bool apUsesDevicePassword() { return !devicePassword.isEmpty() && !wifiSsid.isEmpty(); }
+
 void startAP() {
-  const char *pw = devicePassword.isEmpty() ? SETUP_PASSWORD : devicePassword.c_str();
+  const char *pw = apUsesDevicePassword() ? devicePassword.c_str() : SETUP_PASSWORD;
   WiFi.softAP(apName().c_str(), pw);
   dns.start(53, "*", WiFi.softAPIP());
   apActive = true;
@@ -1336,7 +1354,7 @@ void startAP() {
   // Solange das Einrichtungs-WLAN offen ist, sucht der ESP das Heim-WLAN nur minütlich: dauerndes Suchen
   // wechselt den Funkkanal und würde verbundene Handys immer wieder trennen.
   WiFi.setAutoReconnect(false);
-  LOG("Einrichtungs-WLAN %s geoeffnet (%s)", apName().c_str(), devicePassword.isEmpty() ? "Standardpasswort" : "Geraetepasswort");
+  LOG("Einrichtungs-WLAN %s geoeffnet (%s)", apName().c_str(), apUsesDevicePassword() ? "Geraetepasswort" : "Standardpasswort");
 }
 
 void stopAP() {

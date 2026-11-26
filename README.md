@@ -65,7 +65,7 @@ flowchart LR
 
 | Version | Stand | Dateien |
 |---|---|---|
-| **v2** (aktuell, Firmware 2.2.0) | Mehrlüfter-Version: Gegenlauf, Übersicht, Loxone-Vorlagen, Einrichtungsassistent, neues Design, Protokoll, Web-Update | [dist/v2](dist/v2/) |
+| **v2** (aktuell, Firmware 2.2.1) | Mehrlüfter-Version: Gegenlauf, Übersicht, Loxone-Vorlagen, Einrichtungsassistent, neues Design, Protokoll, Web-Update | [dist/v2](dist/v2/) |
 | v1 | erste, getestete Version (ein Lüfter, Grundfunktionen) | [dist/v1](dist/v1/) |
 
 Pro Version gibt es drei Dateien. Welche du brauchst, steht in

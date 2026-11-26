@@ -4,11 +4,20 @@ Beide Versionen liegen fertig im Repository und nutzen dieselbe Verdrahtung und 
 gespeicherten Grundeinstellungen (WLAN, API-Schlüssel, Busfreigabe). Du kannst jederzeit
 wechseln.
 
-| | v1 (getestet, bisher geflasht) | v2 (Firmware 2.2.0) |
+| | v1 (getestet, bisher geflasht) | v2 (Firmware 2.2.1) |
 |---|---|---|
 | Dateien | [dist/v1](../dist/v1/) | [dist/v2](../dist/v2/) |
 | Quellcode | Commit `b0c1332` | aktueller Stand |
 | Loxone-Anleitung | [v1/LOXONE-v1.md](v1/LOXONE-v1.md) | [LOXONE.md](LOXONE.md) |
+
+## Firmware 2.2.1 (Fehlerbehebung)
+
+- **Ersteinrichtung:** Nach dem Festlegen des Gerätepassworts und einer Namensänderung
+  startete der ESP neu und öffnete das Einrichtungs-WLAN mit dem neuen Gerätepasswort statt
+  `Lueftung-Start`. Das Handy konnte sich deshalb nicht mehr verbinden. Jetzt gilt das
+  Gerätepasswort für das Einrichtungs-WLAN erst, wenn ein Heim-WLAN eingerichtet ist.
+- Ein neuer Gerätename wird ohne Neustart übernommen, solange der ESP noch nicht mit dem
+  Heim-WLAN verbunden ist.
 
 ## Neu in Firmware 2.2.0 (Mehrlüfter-Version)
 

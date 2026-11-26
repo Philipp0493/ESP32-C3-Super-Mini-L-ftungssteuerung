@@ -1,7 +1,7 @@
 # Schritt-für-Schritt: 8–10 Ambientika-Lüfter in Loxone einbinden
 
 Diese Anleitung führt dich vom Auspacken bis zur Bedienung in der Loxone-App. Sie ist
-für Firmware **v2 (2.2.0)** geschrieben und gilt genauso für einen einzelnen Lüfter.
+für Firmware **v2 (2.2.1)** geschrieben und gilt genauso für einen einzelnen Lüfter.
 
 **Zeitbedarf:** erster Lüfter etwa 45 Minuten. Mit der Vorlage aus Schritt 6 brauchst
 du für jeden weiteren Lüfter etwa 10 Minuten, plus Verdrahtung.
@@ -162,16 +162,18 @@ dasselbe Passwort.** Ab jetzt fragt der Browser beim Öffnen nach:
 - Benutzer: **`admin`**
 - Passwort: dein Gerätepasswort
 
-Ab dem nächsten Start schützt das Passwort auch das Einrichtungs-WLAN. Das bekannte
-`Lueftung-Start` gilt dann nicht mehr.
+Das Einrichtungs-WLAN behält während der Einrichtung sein Passwort `Lueftung-Start`.
+Erst wenn das Heim-WLAN eingerichtet ist, schützt dein Gerätepasswort auch das
+Einrichtungs-WLAN, das sich nur noch bei einem WLAN-Ausfall öffnet.
 
 ### 5.3 Schritt 2: Raum und Gerätenamen
 
 - **Anzeigename:** z. B. `Schlafzimmer`. Umlaute sind erlaubt. Der Name erscheint auf der
   Seite, in der Übersicht und in den Loxone-Vorlagen.
 - **Gerätename:** wird automatisch vorgeschlagen (`lueftung-schlafzimmer`). Übernimm ihn
-  oder trag den Namen aus deiner Tabelle ein. Eine Änderung startet den ESP neu, die Seite
-  danach einfach neu laden.
+  oder trag den Namen aus deiner Tabelle ein. Während der Ersteinrichtung wird er ohne
+  Neustart übernommen. Ist der ESP schon mit dem Heim-WLAN verbunden, startet er neu und die
+  Seite lädt sich nach 20 s selbst neu.
 
 ### 5.4 Schritt 3: Heim-WLAN
 

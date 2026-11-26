@@ -413,6 +413,23 @@ int main() {
   // ---------- Watchdog
   assert(fakeWdtInit >= 1); int wdt = fakeWdtResets; tick(fakeNow + 1); assert(fakeWdtResets == wdt + 1);
 
+  // ---------- Regression 2.2.1: Passwort + Name in der Ersteinrichtung dürfen das Handy nicht aussperren
+  prefs.remove("ssid"); prefs.remove("pass"); prefs.putString("devpw", "Neu-Passwort1"); prefs.putString("ipmode", "dhcp"); prefs.putBool("txlow", false);
+  WiFi.connection = 0; restartPending = false; reboot();
+  assert(apActive && WiFi.apPassword == SETUP_PASSWORD);  // noch kein Heim-WLAN: bekanntes Einrichtungs-Passwort
+  apiKey = prefs.getString("key", "");
+  call("/api/network", {{"hostname", "lueftung-gaeste"}, {"ipmode", "dhcp"}, {"txlow", "0"}, {"key", apiKey}});
+  assert(web.code == 200 && !restartPending && hostName == "lueftung-gaeste" && fakeNetifHostname == "lueftung-gaeste" && WiFi.hostname == "lueftung-gaeste");
+  assert(prefs.getString("host", "") == "lueftung-gaeste" && web.body.find("Neustart") == std::string::npos);
+  reboot(); assert(apActive && WiFi.apPassword == SETUP_PASSWORD && hostName == "lueftung-gaeste");  // auch nach Neustart
+  // mit Heim-WLAN: Gerätepasswort schützt das Einrichtungs-WLAN, Namensänderung bei Verbindung startet neu
+  call("/wifi", {{"ssid", "home"}, {"password", "examplepass"}, {"key", apiKey}});
+  stopAP(); WiFi.connection = 0; { uint32_t t0 = fakeNow; tick(t0 + 1); tick(t0 + AP_GRACE_MS + 2); }
+  assert(apActive && WiFi.apPassword == "Neu-Passwort1");
+  WiFi.connection = 1; tick(fakeNow + 1);
+  call("/api/network", {{"hostname", "lueftung-gast"}, {"ipmode", "dhcp"}, {"txlow", "0"}, {"key", apiKey}});
+  assert(web.code == 200 && restartPending); restartPending = false;
+
   // ---------- millis()-Überlauf
   assert(elapsed(500, 0xfffffff0, 500)); assert(!elapsed(10, 0xfffffff0, 500));
   std::cout << "PASS: v2 firmware – Zyklus, Motorpausen, Boost, Statusabfrage (manuell/automatisch), Filter-Reset, "

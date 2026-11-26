@@ -81,4 +81,4 @@ nach abgeschlossener Fehlersuche, damit neue Ereignisse leichter zu finden sind.
 | Handy öffnet die Einrichtungsseite nicht automatisch | `http://192.168.4.1` im Browser eingeben. Bei „Kein Internet“ verbunden bleiben. |
 | Im automatisch geöffneten Fenster lässt sich die Vorlage nicht auswählen | `http://192.168.4.1` im normalen Browser (Safari/Chrome) öffnen. |
 | Einrichtungs-WLAN „Ambientika-…“ ist nicht zu sehen | Es öffnet sich nur ohne gespeichertes WLAN oder nach 2 Minuten ohne Heim-WLAN. Zum Zurücksetzen den BOOT-Taster 10 s halten. |
-| Passwort des Einrichtungs-WLANs passt nicht | Nach dem Festlegen des Gerätepassworts gilt dieses statt `Lueftung-Start`. |
+| Passwort des Einrichtungs-WLANs passt nicht | Ist ein Heim-WLAN eingerichtet und ein Gerätepasswort gesetzt, gilt das Gerätepasswort statt `Lueftung-Start`. Am Handy das Netz „vergessen“ und mit dem Gerätepasswort neu verbinden. (Firmware 2.2.0 hat das schon während der Ersteinrichtung getan; behoben in 2.2.1.) |

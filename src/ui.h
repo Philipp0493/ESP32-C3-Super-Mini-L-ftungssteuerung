@@ -195,7 +195,7 @@ padding:12px 18px;border-radius:14px;max-width:min(560px,calc(100% - 32px));box-
  <p class="small">Schritte von oben nach unten erledigen. Erledigte Schritte sind grün markiert und können jederzeit wieder geöffnet werden.</p>
 
  <details class="card step" id="st-pw"><summary><span class="num">1</span><span class="state"></span><p class="eyebrow">Sicherheit</p><h2>Gerätepasswort festlegen</h2></summary>
-  <p>Schützt diese Seite (Anmeldung mit Benutzer <b>admin</b>), das Einrichtungs-WLAN und Updates. Tipp: für alle Lüfter dasselbe Passwort verwenden.</p>
+  <p>Schützt diese Seite (Anmeldung mit Benutzer <b>admin</b>) und Updates. Sobald das Heim-WLAN eingerichtet ist, gilt es auch für das Einrichtungs-WLAN – bis dahin bleibt dort <b>Lueftung-Start</b>. Tipp: für alle Lüfter dasselbe Passwort verwenden.</p>
   <form id="pwForm"><div class="grid2"><label>Neues Passwort<input name="password" type="password" minlength="8" maxlength="63" autocomplete="new-password" required></label>
   <label>Wiederholen<input name="repeat" type="password" maxlength="63" autocomplete="new-password" required></label></div>
   <p class="small">8–63 Zeichen, ohne Leerzeichen und Umlaute.</p><div class="row"><button>Passwort speichern</button></div></form></details>
@@ -204,7 +204,7 @@ padding:12px 18px;border-radius:14px;max-width:min(560px,calc(100% - 32px));box-
   <p>Der <b>Anzeigename</b> erscheint hier, in der Übersicht und in Loxone. Der <b>Gerätename</b> erscheint im Router und ergibt die Adresse <code>http://gerätename.local</code>.</p>
   <form id="nameForm"><label>Anzeigename (z. B. „Schlafzimmer“)<input name="dname" maxlength="40" required></label>
   <label>Gerätename im Netzwerk<input name="hostname" maxlength="32" pattern="[a-z0-9]([a-z0-9\-]*[a-z0-9])?" required></label>
-  <p class="small">Nur a–z, 0–9 und Bindestrich, z. B. <code>lueftung-schlafen</code>. Eine Änderung startet den ESP neu.</p>
+  <p class="small">Nur a–z, 0–9 und Bindestrich, z. B. <code>lueftung-schlafen</code>. Ist der ESP schon mit dem Heim-WLAN verbunden, startet er nach einer Änderung neu.</p>
   <div class="row"><button>Namen speichern</button></div></form></details>
 
  <details class="card step" id="st-wifi"><summary><span class="num">3</span><span class="state"></span><p class="eyebrow">Netzwerk</p><h2>Mit dem Heim-WLAN verbinden</h2></summary>
@@ -388,12 +388,13 @@ async function loadSettings(){try{SET=JSON.parse(await api('/api/settings',{},'G
 function staticFields(){$('#staticFields').classList.toggle('hidden',$('#netForm').ipmode.value!=='static')}
 $('#netForm').ipmode.onchange=staticFields;
 $('#pwForm').onsubmit=act(async e=>{const f=e.target;if(f.password.value!==f.repeat.value)throw Error('Die Passwörter stimmen nicht überein');
- await api('/api/password',{password:f.password.value});f.reset();toast('Gespeichert. Beim nächsten Öffnen: Benutzer „admin“ + dieses Passwort');loadSettings()});
+ await api('/api/password',{password:f.password.value});f.reset();toast('Gespeichert. Beim nächsten Öffnen der Seite: Benutzer „admin“ + dieses Passwort');loadSettings()});
 $('#nameForm').dname.oninput=e=>{const h=$('#nameForm').hostname;if(!h.dataset.touched)h.value=('lueftung-'+slug(e.target.value)).slice(0,32).replace(/-+$/,'')};
 $('#nameForm').hostname.oninput=e=>e.target.dataset.touched=1;
 $('#nameForm').onsubmit=act(async e=>{const f=e.target;await api('/api/settings',{name:f.dname.value.trim()});
- if(f.hostname.value!==SET.hostname){await api('/api/network',{hostname:f.hostname.value,ipmode:SET.ipmode,ip:SET.static_ip,mask:SET.mask,gw:SET.gw,dns:SET.dns,txlow:SET.txlow?1:0});
-  toast('Gespeichert – der ESP startet neu. Seite in 20 s neu laden.')}else toast('Name gespeichert');loadSettings();refresh()});
+ if(f.hostname.value!==SET.hostname){
+  const t=await api('/api/network',{hostname:f.hostname.value,ipmode:SET.ipmode,ip:SET.static_ip,mask:SET.mask,gw:SET.gw,dns:SET.dns,txlow:SET.txlow?1:0});
+  if(/Neustart/.test(t)){toast('Gespeichert – der ESP startet neu, Seite lädt in 20 s neu');setTimeout(()=>location.reload(),20000)}else toast('Name gespeichert')}else toast('Name gespeichert');loadSettings();refresh()});
 $('#wifiForm').onsubmit=act(async e=>{const f=e.target;if(f.password.value&&f.password.value.length<8)throw Error('WLAN-Passwort: mindestens 8 Zeichen');
  await api('/wifi',{ssid:f.ssid.value,password:f.password.value});const r=$('#wifiResult');r.classList.remove('hidden');r.textContent='Verbindung wird aufgebaut … das kann bis zu 30 Sekunden dauern.';
  let n=0;const t=setInterval(async()=>{n++;await loadSettings();if(SET.connected||n>15){clearInterval(t);if(!SET.connected)r.textContent='Noch keine Verbindung. WLAN-Name und Passwort prüfen (2,4 GHz). Details im Protokoll (System).'}},3000)});
