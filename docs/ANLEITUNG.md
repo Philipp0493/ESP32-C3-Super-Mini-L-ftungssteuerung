@@ -224,8 +224,8 @@ Probelauf: Tab **Lüfter** → **Wärmerückgewinnung** antippen.
 - Nach etwa 15 Sekunden steht unter „Zustand“ **Lüfter antwortet**. Steht dort „antwortet
   nicht“: Verdrahtung prüfen (siehe [FEHLERSUCHE.md](FEHLERSUCHE.md)).
 - Nach dem ersten Einschalten braucht die Klappe 40–60 Sekunden, bis der Motor anläuft.
-- **Die Frontklappe bzw. Blende des Lüfters muss geschlossen sein.** Im Praxistest
-  reagierte der Lüfter mit offener Klappe weder auf Befehle noch auf Statusabfragen.
+- Reagiert der Lüfter nur zeitweise oder gar nicht: alle Steckverbindungen und Klemmen auf
+  **Wackelkontakt** prüfen (Dupont-Litzen am ESP und am Wandler, Klemmen 3/4/5 am Lüfter).
 - Unter „Zustand“ kann **„Rohdaten 000808 (Sensoren noch nicht ausgewertet)“** stehen. Das
   ist in Ordnung: Der Lüfter antwortet in einem kürzeren Format als im Hersteller-PDF.
   Filter, Feuchte und Dämmerung zeigen dann „unbekannt“, bis die Codierung ausgewertet ist.

@@ -60,7 +60,7 @@ im WRG-Takt gar nicht.
 | `Abgelehnt 400 (ungueltiger Wert) … mode=7` | Loxone sendet einen ungültigen Wert, z. B. bei Analogbefehlen „Als Digitalausgang verwenden“ nicht abgeschaltet. |
 | `Abgelehnt 409 (Bus gesperrt)` | Lüfter auf der ESP-Seite noch nicht freigegeben. |
 | `Luefter antwortet nicht auf Statusabfrage` | Keine Antwort über RS485: Verdrahtung, A/B vertauscht, DIP-Schalter „Master mit Wandpanel“, Versorgung des Wandlers prüfen. |
-| Lüfter reagiert nicht und antwortet nicht, obwohl Verdrahtung und DIP-Schalter stimmen | **Frontklappe bzw. Blende des Lüfters schließen.** Im Praxistest reagierte der Lüfter erst mit geschlossener Klappe auf Befehle und Statusabfragen. |
+| Lüfter reagiert nicht oder nur zeitweise, obwohl Verdrahtung und DIP-Schalter stimmen | **Wackelkontakt** suchen: Dupont-Litzen am ESP und am Wandler festdrücken oder besser löten bzw. mit Schraubklemmen verbinden, Adern in den Klemmen 3/4/5 am Lüfter nachziehen. Im Praxistest war genau das die Ursache. |
 | `Rohdaten 000808 (Format abweichend …)` | Der Lüfter antwortet, die Verbindung ist in Ordnung. Er nutzt ein kürzeres Format als im Hersteller-PDF. Filter, Feuchte und Dämmerung bleiben „unbekannt“, bis die Codierung geklärt ist. Melde gern, wie sich die Rohdaten ändern (z. B. bei Dunkelheit oder Filteralarm). |
 | `Statusabfrage: ungueltige Antwort '…'` | Es kommen Daten, aber gestört: Masse/Abschlusswiderstand prüfen, A/B tauschen. |
 | `Unerwartete Daten auf dem Bus` | Jemand anderes sendet: Wandpanel noch angeschlossen, zweiter Master oder Echo des Wandlers. |
