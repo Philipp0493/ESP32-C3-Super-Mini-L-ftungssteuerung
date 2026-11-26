@@ -78,7 +78,9 @@ Protokoll lesen: `GET /api/log?key=KEY` → Text ([FEHLERSUCHE.md](FEHLERSUCHE.m
 | `GET /api/session` | Gerätepasswort | liefert den API-Schlüssel für die Bedienseite |
 
 `/api/status` enthält ab 2.2.0 zusätzlich `name`, `hostname`, `phase_remaining_s`,
-`sync_group`, `group_clock` (Gruppentakt aktiv) und `time_synced`. `/api/status`,
+`sync_group`, `group_clock` (Gruppentakt aktiv) und `time_synced`, ab 2.2.2 außerdem
+`status_raw` (Inhalt der letzten Lüfterantwort) und `status_decoded` (true = Format laut
+Hersteller-PDF, Sensorwerte ausgewertet). `/api/status`,
 `/api/loxone`, `/api/peers` und die Steuerbefehle senden
 `Access-Control-Allow-Origin: *`, damit die Übersichtsseite eines Lüfters die anderen
 abfragen kann. Die Steuerbefehle bleiben durch den Schlüssel geschützt.

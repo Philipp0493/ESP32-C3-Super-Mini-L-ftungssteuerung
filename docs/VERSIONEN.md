@@ -4,11 +4,20 @@ Beide Versionen liegen fertig im Repository und nutzen dieselbe Verdrahtung und 
 gespeicherten Grundeinstellungen (WLAN, API-Schlüssel, Busfreigabe). Du kannst jederzeit
 wechseln.
 
-| | v1 (getestet, bisher geflasht) | v2 (Firmware 2.2.1) |
+| | v1 (getestet, bisher geflasht) | v2 (Firmware 2.2.2) |
 |---|---|---|
 | Dateien | [dist/v1](../dist/v1/) | [dist/v2](../dist/v2/) |
 | Quellcode | Commit `b0c1332` | aktueller Stand |
 | Loxone-Anleitung | [v1/LOXONE-v1.md](v1/LOXONE-v1.md) | [LOXONE.md](LOXONE.md) |
+
+## Firmware 2.2.2 (Praxistest)
+
+- **Statusantwort echter Geräte:** Ein Lüfter antwortete im Test mit `<02>000808<03>`
+  statt im Format des Hersteller-PDFs (`00` + 8 Zeichen aus 0/1). Bisher meldete die
+  Firmware deshalb fälschlich „Lüfter antwortet nicht“. Jetzt gilt jede Antwort mit
+  Nachrichtentyp `00` und Hex-Inhalt als gültig. Das PDF-Format wird weiter ausgewertet.
+  Andere Formate erscheinen als **Rohdaten** (Seite, Protokoll, `status_raw` in
+  `/api/status`). Die Sensorwerte bleiben dann „unbekannt“, bis die Codierung geklärt ist.
 
 ## Firmware 2.2.1 (Fehlerbehebung)
 

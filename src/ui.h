@@ -349,6 +349,7 @@ function render(s){ST=s;const run=s.phase==='supply'||s.phase==='extract';const 
  const chips=[f(s.filter,'Filter in Ordnung','Filterwechsel fällig','Filter: noch unbekannt'),f(s.humidity_alarm,'Feuchte normal','Feuchtealarm','Feuchte: unbekannt'),
   s.dark<0?['','Dämmerung: unbekannt']:['',s.dark?'Dunkel':'Hell'],s.comm_ok<0?['','Lüfterantwort: ausstehend']:s.comm_ok?['ok','Lüfter antwortet']:['bad','Lüfter antwortet nicht'],
   [s.rssi>-67?'ok':s.rssi>-80?'warn':'bad','WLAN '+s.rssi+' dBm']];
+ if(s.status_raw&&!s.status_decoded)chips.push(['','Rohdaten '+s.status_raw+' (Sensoren noch nicht ausgewertet)']);
  if(s.sync_group)chips.push([s.group_clock?'ok':'warn','Gegenlauf '+(s.sync_group===1?'A':'B')+(s.group_clock?'':' (wartet auf Uhrzeit)')]);
  $('#chips').innerHTML=chips.map(c=>'<span class="chip"><i class="dot '+c[0]+'"></i>'+c[1]+'</span>').join('');
  $('#filterCard').classList.toggle('hidden',s.filter!==1);$('#queryBtn').disabled=!s.enabled;

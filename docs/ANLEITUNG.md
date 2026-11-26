@@ -1,7 +1,7 @@
 # Schritt-für-Schritt: 8–10 Ambientika-Lüfter in Loxone einbinden
 
 Diese Anleitung führt dich vom Auspacken bis zur Bedienung in der Loxone-App. Sie ist
-für Firmware **v2 (2.2.1)** geschrieben und gilt genauso für einen einzelnen Lüfter.
+für Firmware **v2 (2.2.2)** geschrieben und gilt genauso für einen einzelnen Lüfter.
 
 **Zeitbedarf:** erster Lüfter etwa 45 Minuten. Mit der Vorlage aus Schritt 6 brauchst
 du für jeden weiteren Lüfter etwa 10 Minuten, plus Verdrahtung.

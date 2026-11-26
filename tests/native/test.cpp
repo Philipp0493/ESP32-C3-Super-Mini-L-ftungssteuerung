@@ -97,6 +97,23 @@ int main() {
     tick(fakeNow + 3000); bus.out.clear();
   }
 
+  // ---------- Kürzere Antwort echter Geräte (beobachtet: "000808"): Verbindung ok, Sensoren unbekannt
+  call("/api/query", {{"key", apiKey}}); tick(fakeNow + 500); expect(PAYLOAD_QUERY);
+  bus.in = STX + "000808" + ETX; tick(fakeNow + 100);
+  assert(statusRaw == "000808" && !statusDecoded && light == -1 && filter1 == -1 && moist == -1 && filterAlarm() == -1);
+  tick(fakeNow + 3000); bus.out.clear(); assert(commOk == 1);
+  assert(statusJson().find("\"status_raw\":\"000808\"") != std::string::npos && statusJson().find("\"status_decoded\":false") != std::string::npos);
+  assert(logText().find("Rohdaten 000808") != std::string::npos);
+  // PDF-Format wird weiterhin ausgewertet
+  call("/api/query", {{"key", apiKey}}); tick(fakeNow + 500); bus.out.clear();
+  bus.in = STX + "0010110000" + ETX; tick(fakeNow + 100); assert(statusDecoded && light == 1 && filterAlarm() == 1);
+  tick(fakeNow + 3000); bus.out.clear(); assert(commOk == 1);
+  // Kein Hex / zu kurz / falscher Nachrichtentyp: keine gültige Antwort
+  for (auto body : {STX + "0008G8" + ETX, STX + "0008" + ETX, STX + "010808" + ETX}) {
+    call("/api/query", {{"key", apiKey}}); tick(fakeNow + 500); bus.out.clear();
+    bus.in = body; tick(fakeNow + 100); tick(fakeNow + 3000); bus.out.clear(); assert(commOk == 0);
+  }
+
   // ---------- Automatische Abfrage alle 5 Minuten
   autoQuery = true; lastQuery = fakeNow; tick(fakeNow + 500); assert(bus.out.find(PAYLOAD_QUERY) == std::string::npos); bus.out.clear();
   // ohne Pause in diesem Moment (WRG läuft) wird nach Ablauf abgefragt

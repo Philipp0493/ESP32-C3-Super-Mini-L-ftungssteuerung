@@ -19,7 +19,7 @@
 #include <stdarg.h>
 #include "ui.h"
 
-#define FW_VERSION "2.2.1"
+#define FW_VERSION "2.2.2"
 
 // ---------------------------------------------------------------- Hardware
 constexpr int RX_PIN = 4, TX_PIN = 5;
@@ -167,6 +167,8 @@ volatile bool wifiDiscPending = false;
 volatile uint8_t wifiDiscReason = 0;
 uint8_t lastLoggedDiscReason = 0;
 String rawReply, ntpGateway;
+String statusRaw;            // Inhalt der letzten gültigen Lüfterantwort (ohne STX/ETX)
+bool statusDecoded = false;  // true = Format laut Hersteller-PDF, Sensorwerte ausgewertet
 
 // ================================================================ Hilfsfunktionen
 bool elapsed(uint32_t now, uint32_t since, uint32_t duration) { return uint32_t(now - since) >= duration; }
@@ -510,11 +512,38 @@ uint32_t phaseRemainingS() {
 
 int filterAlarm() { return (filter1 < 0 && filter2 < 0) ? -1 : (filter1 == 1 || filter2 == 1) ? 1 : 0; }
 
+// Gültige Statusantwort: "00" (Nachrichtentyp Statusmeldung) + 4–18 Hex-Zeichen.
+bool statusFrameValid() {
+  if (frame.length() < 6 || frame.length() > 20 || !frame.startsWith("00")) return false;
+  for (unsigned i = 2; i < frame.length(); i++) {
+    char c = frame[i];
+    if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'))) return false;
+  }
+  return true;
+}
+
 void parseReply(uint32_t now) {
-  // Laut Text 11 Byte, das Beispieltelegramm enthält aber "00" + 8 Register zwischen STX/ETX.
-  if (frame.length() != 10 || !frame.startsWith("00")) return;
-  for (int i = 2; i < 10; i++)
-    if (frame[i] != '0' && frame[i] != '1') return;
+  if (!statusFrameValid()) return;
+  bool rawChanged = frame != statusRaw;
+  lastReply = now;
+  replyInWindow = true;
+  // Format laut Hersteller-PDF: "00" + 8 Register aus '0'/'1' (Dämmerung, Filter, Filter, Feuchte, 4 frei).
+  bool pdfFormat = frame.length() == 10;
+  for (unsigned i = 2; pdfFormat && i < 10; i++) pdfFormat = frame[i] == '0' || frame[i] == '1';
+  if (!pdfFormat) {
+    // Manche Geräte antworten kürzer (z. B. "000808"). Die Verbindung ist damit bestätigt; Sensorwerte
+    // werden nicht geraten, sondern als Rohdaten angezeigt, bis die Codierung bekannt ist.
+    if (rawChanged || manualQuery || !hasReply)
+      LOG("%s: Rohdaten %s (Format abweichend vom Hersteller-PDF, Sensorwerte nicht ausgewertet)",
+          !hasReply ? "Erste Luefterantwort" : rawChanged ? "Luefterantwort geaendert" : "Statusabfrage", frame.c_str());
+    statusRaw = frame;
+    statusDecoded = false;
+    light = filter1 = filter2 = moist = -1;
+    hasReply = true;
+    return;
+  }
+  statusRaw = frame;
+  statusDecoded = true;
   int nl = frame[2] - '0', nf1 = frame[3] - '0', nf2 = frame[4] - '0', nm = frame[5] - '0';
   bool changed = nl != light || nf1 != filter1 || nf2 != filter2 || nm != moist;
   bool filterNew = (nf1 == 1 || nf2 == 1) && filter1 != 1 && filter2 != 1;
@@ -525,9 +554,7 @@ void parseReply(uint32_t now) {
   filter1 = nf1;
   filter2 = nf2;
   moist = nm;
-  lastReply = now;
   hasReply = true;
-  replyInWindow = true;
 }
 
 void readBus(uint32_t now) {
@@ -696,6 +723,8 @@ String statusJson() {
   s += ",\"device_status_received\":" + String(hasReply ? "true" : "false");
   s += ",\"status_age_ms\":" + (hasReply ? String(uint32_t(now - lastReply)) : String("null"));
   s += ",\"comm_ok\":" + String(commOk);
+  s += ",\"status_raw\":\"" + statusRaw + "\"";
+  s += ",\"status_decoded\":" + String(statusDecoded ? "true" : "false");
   s += ",\"dark\":" + String(light);
   s += ",\"filter_1\":" + String(filter1);
   s += ",\"filter_2\":" + String(filter2);
@@ -1502,7 +1531,7 @@ String logText() {
   s += "Bus: " + String(enabled ? "freigegeben" : "gesperrt") + ", Betriebsart " + modeDescription(mode, level, humidity, night) + ", Phase " + phaseName() +
        ", Gegenlauf-Gruppe " + groupName(syncGroup) + (groupClockActive() ? " (Takt aktiv)" : "") + "\n";
   s += "Optionen: Geraetepasswort " + String(devicePassword.isEmpty() ? "NICHT gesetzt" : "gesetzt") + ", Wiederanlauf " + (resumeAfterBoot ? "an" : "aus") + ", Auto-Abfrage " + (autoQuery ? "an" : "aus") + "\n";
-  s += "Luefter: comm_ok " + String(commOk) + ", letzte Antwort " + (hasReply ? String("vor ") + formatDuration((millis() - lastReply) / 1000) : String("nie")) +
+  s += "Luefter: comm_ok " + String(commOk) + ", Rohdaten " + (statusRaw.length() ? statusRaw : String("-")) + (statusDecoded ? " (PDF-Format)" : "") + ", letzte Antwort " + (hasReply ? String("vor ") + formatDuration((millis() - lastReply) / 1000) : String("nie")) +
        ", Daemmerung " + String(light) + ", Filter " + String(filter1) + "/" + String(filter2) + ", Feuchte " + String(moist) + "\n";
   s += "\n=== Wichtige Ereignisse (dauerhaft gespeichert, aelteste zuerst) ===\n";
   appendEntries(s, persistLog.entries, PERSIST_SIZE, persistLog.head, persistLog.count);
